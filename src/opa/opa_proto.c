@@ -76,6 +76,7 @@
 
 #include "ipserror.h"
 #include "opa_user.h"
+#include "opa_udebug.h"
 
 #include <sched.h>
 
@@ -101,7 +102,7 @@ struct _hfi_ctrl *hfi_userinit(int fd, struct hfi1_user_info_dep *uinfo)
 	int __hfi_pg_sz;
 #ifdef PSM2_SUPPORT_IW_CMD_API
 	/* for major version 6 of driver, we will use uinfo_new.  See below for details. */
-	struct hfi1_user_info uinfo_new;
+	struct hfi1_user_info uinfo_new = {0};
 #endif
 
 	/* First get the page size */
@@ -125,14 +126,14 @@ struct _hfi_ctrl *hfi_userinit(int fd, struct hfi1_user_info_dep *uinfo)
 	c.type = HFI1_CMD_ASSIGN_CTXT;
 
 #ifdef PSM2_SUPPORT_IW_CMD_API
-	/* If psm is comunicating with a MAJOR version 6 driver, we need
+	/* If psm is communicating with a MAJOR version 6 driver, we need
 	   to pass in an actual struct hfi1_user_info not a hfi1_user_info_dep.
 	   Else if psm is communicating with a MAJOR version 5 driver, we can
 	   just continue to pass a hfi1_user_info_dep as struct hfi1_user_info_dep
 	   is identical to the MAJOR version 5 struct hfi1_user_info. */
 	if (hfi_get_user_major_version() == IOCTL_CMD_API_MODULE_MAJOR)
 	{
-		/* If psm is communitcation with a MAJOR version 6 driver,
+		/* If psm is communication with a MAJOR version 6 driver,
 		   we copy uinfo into uinfo_new and pass uinfo_new to the driver. */
 		c.len = sizeof(uinfo_new);
 		c.addr = (__u64) (&uinfo_new);
@@ -247,6 +248,12 @@ struct _hfi_ctrl *hfi_userinit(int fd, struct hfi1_user_info_dep *uinfo)
 		}
 	}
 
+        if (getenv("PSM2_IDENTIFY")) {
+                printf("%s %s run-time driver interface v%d.%d\n",
+                          hfi_get_mylabel(), hfi_ident_tag, hfi_get_user_major_version(), hfi_get_user_minor_version());
+        }
+
+
 	/* 4. Get user base info from driver */
 	c.type = HFI1_CMD_USER_INFO;
 	c.len = sizeof(*binfo);
@@ -256,6 +263,8 @@ struct _hfi_ctrl *hfi_userinit(int fd, struct hfi1_user_info_dep *uinfo)
 		_HFI_INFO("BASE_INFO command failed: %s\n", strerror(errno));
 		goto err;
 	}
+
+	hfi_set_user_version(binfo->sw_version);
 
 	_HFI_VDBG("baseinfo: hwver %x, swver %x, jkey %d, qp %d\n",
 		  binfo->hw_version, binfo->sw_version,

@@ -1,14 +1,14 @@
 Summary: Intel PSM Libraries
 Name: libpsm2
-Version: 10.2.33
-Release: 1%{?dist}
+Version: 10.2.63
+Release: 2%{?dist}
 License: GPLv2 or BSD
 URL: https://github.com/01org/opa-psm2
 # Source tarball obtained by:
 # git clone https://github.com/01org/opa-psm2
 # cd opa-psm2
-# git checkout 10.2
-# git archive --prefix=libpsm2-10.2.33/ --format=tar 855c3871d57239904f993166dd65bf0e1c12b9f4 | gzip > libpsm2-10.2.33.tar.gz
+# # Latest commit id is a1cb2adaedb3bd3fa84dc0bcf66333b2e598d777.
+# make dist
 Source0: %{name}-%{version}.tar.gz
 BuildRequires: kernel-headers >= 3.10.0-455
 BuildRequires: gcc
@@ -46,6 +46,7 @@ LD_LIBRARY_PATH=%{_libdir}/psm2-compat
 
 %prep
 %setup -q
+find . -type f -iname '*.[ch]' -exec chmod a-x '{}' ';'
 
 %build
 CFLAGS="%{optflags}" make %{?_smp_mflags}
@@ -78,6 +79,14 @@ CFLAGS="%{optflags}" make %{?_smp_mflags}
 
 
 %changelog
+* Mon Mar  6 2017 Honggang Li <honli@redhat.com> - 10.2.63-2
+- Make sure all C source code is not executable.
+- Resolves: bz1382802
+
+* Fri Mar  3 2017 Honggang Li <honli@redhat.com> - 10.2.63-1
+- Rebase to upstream latest release 10.2.63.
+- Resolves: bz1382802
+
 * Fri Aug  5 2016 Honggang Li <honli@redhat.com> - 10.2.33-1
 - Rebase to upstream latest release 10.2.33.
 - Related: bz1273155
