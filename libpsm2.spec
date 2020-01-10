@@ -1,13 +1,13 @@
 Summary: Intel PSM Libraries
 Name: libpsm2
-Version: 10.3.8
-Release: 3%{?dist}
+Version: 11.2.78
+Release: 1%{?dist}
 License: GPLv2 or BSD
 URL: https://github.com/01org/opa-psm2
 # Source tarball obtained by:
 # git clone https://github.com/01org/opa-psm2
 # cd opa-psm2
-# # Latest commit id is a96419140a6942a11a1438bbffc4c27475d61030.
+# # Latest commit id is 816c0dbdf911dba097dcbb09f023c5113713c33e.
 # make dist
 Source0: %{name}-%{version}.tar.gz
 BuildRequires: kernel-headers >= 3.10.0-455
@@ -58,6 +58,7 @@ CFLAGS="%{optflags}" make %{?_smp_mflags}
 
 %install
 %make_install
+rm -f %{buildroot}%{_libdir}/*.a
 
 %post -p /sbin/ldconfig
 %postun -p /sbin/ldconfig
@@ -84,6 +85,14 @@ CFLAGS="%{optflags}" make %{?_smp_mflags}
 
 
 %changelog
+* Thu Jan 31 2019 Honggang Li <honli@redhat.com> - 11.2.78-1
+- Rebase to latest upstream release PSM2_11.2.78
+- Resolves: bz1637248
+
+* Wed Jun 20 2018 Honggang Li <honli@redhat.com> - 10.3.58-1
+- Rebase to latest upstream release PSM2_10.3.58
+- Resolves: bz1483573
+
 * Tue Jan  9 2018 Honggang Li <honli@redhat.com> - 10.3.8-3
 - libpsm2-compat: Filter libpsm_infinipath.so.1 as private library
 - Resolves: bz1396213

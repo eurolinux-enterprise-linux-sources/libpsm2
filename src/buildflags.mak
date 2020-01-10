@@ -80,20 +80,21 @@ else
 	anerr := $(error Unknown Fortran compiler arch: ${FCARCH})
 endif # gfortran
 
-BASECFLAGS += $(BASE_FLAGS)
+BASECFLAGS += $(BASE_FLAGS) -pthread
 LDFLAGS += $(BASE_FLAGS)
 ASFLAGS += $(BASE_FLAGS)
 
 ifeq ($(PSM2_MOCK_TESTING),1)
 BASECFLAGS += -DPSM2_MOCK_TESTING=1
-# we skip the linker script for testing version, we want all symbols to be
-# reachable from outside the library
+unexport LINKER_SCRIPT
+# We skip the linker script for mock testing version, we want all symbols
+# to be reachable from outside the library
 else
 LINKER_SCRIPT := -Wl,--version-script $(LINKER_SCRIPT_FILE)
 endif
 
 WERROR := -Werror
-INCLUDES := -I. -I$(top_srcdir)/include -I$(top_srcdir)/mpspawn -I$(top_srcdir)/include/$(os)-$(arch)
+INCLUDES := -I$(top_srcdir)/include -I$(top_srcdir)/mpspawn -I$(top_srcdir)/include/$(os)-$(arch)
 
 #
 # use IFS provided hfi1_user.h if installed.
@@ -104,36 +105,50 @@ INCLUDES += -I${IFS_HFI_HEADER_PATH}
 BASECFLAGS +=-Wall $(WERROR)
 
 #
-# test if compiler supports SSE4.2 (needed for crc32 instruction)
-#
-RET := $(shell echo "int main() {}" | ${CC} -msse4.2 -E -dM -xc - 2>&1 | grep -q SSE4_2 ; echo $$?)
-ifeq (0,${RET})
-  BASECFLAGS += -msse4.2
-else
-  $(error SSE4.2 compiler support required )
-endif
-
-#
 # test if compiler supports 32B(AVX2)/64B(AVX512F) move instruction.
 #
-ifneq (,${PSM_AVX})
-  ifeq (${CC},icc)
-    MAVX2=-march=core-avx2
+ifeq (${CC},icc)
+  ifeq ($(PSM_DISABLE_AVX2),)
+    MAVX2=-xATOM_SSE4.2 -DPSM_AVX512
   else
-    MAVX2=-mavx2
+    MAVX2=-march=core-avx-i
   endif
-  RET := $(shell echo "int main() {}" | ${CC} ${MAVX2} -E -dM -xc - 2>&1 | grep -q AVX2 ; echo $$?)
-  ifeq (0,${RET})
-    TMPVAR := $(BASECFLAGS)
-    BASECFLAGS := $(filter-out -msse4.2,$(TMPVAR))
-    BASECFLAGS += ${MAVX2}
+else
+  ifeq ($(PSM_DISABLE_AVX2),)
+    MAVX2=-mavx2
+  else
+    MAVX2=-mavx
+  endif
+endif
+
+ifneq (icc,${CC})
+  ifeq ($(PSM_DISABLE_AVX2),)
+    RET := $(shell echo "int main() {}" | ${CC} ${MAVX2} -E -dM -xc - 2>&1 | grep -q AVX2 ; echo $$?)
+  else
+    RET := $(shell echo "int main() {}" | ${CC} ${MAVX2} -E -dM -xc - 2>&1 | grep -q AVX ; echo $$?)
+    $(warning ***NOTE TO USER**** Disabling AVX2 will harm performance)
   endif
 
+  ifeq (0,${RET})
+      BASECFLAGS += ${MAVX2}
+  else
+      $(error Compiler does not support ${MAVX2} )
+  endif
+else
+    BASECFLAGS += ${MAVX2}
+endif
+
+# This support is dynamic at runtime, so is OK to enable as long as compiler can generate
+# the code.
+ifneq (,${PSM_AVX512})
   ifneq (icc,${CC})
     RET := $(shell echo "int main() {}" | ${CC} -mavx512f -E -dM -xc - 2>&1 | grep -q AVX512 ; echo $$?)
     ifeq (0,${RET})
       BASECFLAGS += -mavx512f
+    else
+        $(error Compiler does not support AVX512 )
     endif
+    BASECFLAGS += -DPSM_AVX512
   endif
 endif
 
@@ -166,6 +181,7 @@ ifneq (,${PSM_PERF})
 endif
 ifneq (,${PSM_HEAP_DEBUG})
    BASECFLAGS += -DPSM_HEAP_DEBUG
+   PSM2_ADDITIONAL_GLOBALS += _psmi_heapdebug_val_heapallocs;
 endif
 ifneq (,${PSM_PROFILE})
   BASECFLAGS += -DPSM_PROFILE
@@ -178,33 +194,30 @@ endif
 
 BASECFLAGS += -fpic -fPIC -D_GNU_SOURCE
 
-ifeq (${CCARCH},gcc)
-  BASECFLAGS += -funwind-tables
-endif
-
-ifneq (,${PSM_VALGRIND})
-  CFLAGS += -DPSM_VALGRIND
-else
-  CFLAGS += -DNVALGRIND
-endif
-
 ASFLAGS += -g3 -fpic
 
 BASECFLAGS += ${OPA_CFLAGS}
 
 ifeq (${CCARCH},icc)
-    BASECFLAGS += -O3 -g3 -fpic -fPIC -D_GNU_SOURCE -DPACK_STRUCT_STL=packed,
-    CFLAGS += $(BASECFLAGS)
+    BASECFLAGS += -fpic -fPIC -D_GNU_SOURCE -DPACK_STRUCT_STL=packed,
     LDFLAGS += -static-intel
 else
 	ifeq (${CCARCH},gcc)
-	    CFLAGS += $(BASECFLAGS) -Wno-strict-aliasing -Wformat-security
+	    BASECFLAGS += -funwind-tables -Wno-strict-aliasing -Wformat-security
 	else
-	    ifeq (${CCARCH},gcc4)
-		CFLAGS += $(BASECFLAGS)
-	    else
+	    ifneq (${CCARCH},gcc4)
 		$(error Unknown compiler arch "${CCARCH}")
 	    endif # gcc4
 	endif # gcc
 endif # icc
+
+# We run export here to ensure all the above setup is in the environment
+# for sub makes. However, we exclude this during clean and distclean
+# to avoid resolution of some variables that don't need to be resolved
+# and avoid unnecessary missing file warnings during cleanup.
+ifneq ($(MAKECMDGOALS), clean)
+ifneq ($(MAKECMDGOALS), distclean)
+export
+endif
+endif
 

@@ -76,6 +76,7 @@ static void init_hfi_mylabel(void) __attribute__ ((constructor));
 static void init_hfi_backtrace(void) __attribute__ ((constructor));
 static void init_hfi_dbgfile(void) __attribute__ ((constructor));
 static void fini_hfi_backtrace(void) __attribute__ ((destructor));
+static void fini_hfi_mylabel(void) __attribute__ ((destructor));
 static struct sigaction SIGSEGV_old_act;
 static struct sigaction SIGBUS_old_act;
 static struct sigaction SIGILL_old_act;
@@ -160,6 +161,12 @@ static void init_hfi_mylabel(void)
 	__hfi_mylabel = strdup(lbl);
 }
 
+static void fini_hfi_mylabel(void)
+{
+	if(__hfi_mylabel != NULL)
+		free(__hfi_mylabel);
+}
+
 /* FIXME: This signal handler does not conform to the posix standards described
    in 'man 7 signal' due to it calling unsafe functions.
 
@@ -173,10 +180,10 @@ static void hfi_sighdlr(int sig, siginfo_t *p1, void *ucv)
 	static char buf[150], hname[64], fname[128];
 	static int i, j, fd, id;
 	extern char *__progname;
-	PSM_LOG_DECLARE_BT_BUFFER();
+	PSM2_LOG_DECLARE_BT_BUFFER();
 
 	/* CALLS UNSAFE FUNCTION when PSM_LOG is defined. */
-	PSM_LOG_BT(100,__FUNCTION__);
+	PSM2_LOG_BT(100,__FUNCTION__);
 	/* If this is a SIGINT do not display backtrace. Just invoke exit
 	   handlers */
 	if ((sig == SIGINT) || (sig == SIGTERM))

@@ -55,15 +55,15 @@ OUTDIR = .
 
 this_srcdir = $(shell readlink -m .)
 top_srcdir := $(this_srcdir)/..
-include $(top_srcdir)/buildflags.mak
-INCLUDES += -I$(top_srcdir)
+INCLUDES += -I$(top_srcdir) -I$(top_srcdir)/ptl_ips
 
-${TARGLIB}-objs := ptl.o ptl_rcvthread.o ips_proto.o ipserror.o ips_recvq.o \
-		   ips_recvhdrq.o ips_spio.o ips_proto_recv.o ips_proto_connect.o \
-		   ips_proto_dump.o ips_proto_mq.o ips_subcontext.o \
+${TARGLIB}-objs := ptl.o ptl_rcvthread.o ips_proto.o ips_recvq.o \
+		   ips_recvhdrq.o ips_proto_recv.o ips_proto_connect.o \
+		   ips_proto_dump.o ips_proto_mq.o \
 		   ips_writehdrq.o ips_proto_expected.o ips_tid.o \
 		   ips_scb.o ips_proto_am.o ips_opp_path_rec.o ips_tidflow.o \
 		   ips_epstate.o ips_crc32.o ips_path_rec.o ips_tidcache.o
+
 ${TARGLIB}-objs := $(patsubst %.o, $(OUTDIR)/%.o, ${${TARGLIB}-objs})
 
 DEPS := $(${TARGLIB}-objs:.o=.d)
@@ -74,10 +74,10 @@ IGNORE_DEP_TARGETS = clean
 all .DEFAULT: ${${TARGLIB}-objs}
 
 $(OUTDIR)/%.d: $(this_srcdir)/%.c
-	$(CC) $(CFLAGS) $(INCLUDES) $< -MM -MF $@ -MQ $(@:.d=.o)
+	$(CC) $(CFLAGS) $(BASECFLAGS) $(INCLUDES) $< -MM -MF $@ -MQ $(@:.d=.o)
 
 $(OUTDIR)/%.o: $(this_srcdir)/%.c | ${DEPS}
-	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+	$(CC) $(CFLAGS) $(BASECFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
 	@if [ -d $(OUTDIR) ]; then \
