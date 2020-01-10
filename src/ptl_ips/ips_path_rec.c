@@ -624,7 +624,8 @@ fail:
 	return err;
 }
 
-psm2_error_t ips_ibta_init(struct ips_proto *proto)
+psm2_error_t
+MOCKABLE(ips_ibta_init)(struct ips_proto *proto)
 {
 	psm2_error_t err = PSM2_OK;
 	union psmi_envvar_val psm_path_policy;
@@ -658,7 +659,7 @@ psm2_error_t ips_ibta_init(struct ips_proto *proto)
 		_HFI_PRDBG("Static path selection: Base LID\n");
 
 	psmi_getenv("PSM2_DISABLE_CCA",
-		    "Disable use of Congestion Control Architecure (CCA) [enabled] ",
+		    "Disable use of Congestion Control Architecture (CCA) [enabled] ",
 		    PSMI_ENVVAR_LEVEL_USER, PSMI_ENVVAR_TYPE_UINT,
 		    (union psmi_envvar_val)0, &disable_cca);
 	if (disable_cca.e_uint)
@@ -691,7 +692,7 @@ psm2_error_t ips_ibta_init(struct ips_proto *proto)
  */
 		i = hfi_get_cc_settings_bin(proto->ep->context.ctrl->__hfi_unit,
 					    proto->ep->context.ctrl->__hfi_port,
-					    ccabuf);
+					    ccabuf, sizeof(ccabuf));
 		if (i <= 0) {
 			goto disablecca;
 		}
@@ -773,6 +774,7 @@ finishcca:
 fail:
 	return err;
 }
+MOCK_DEF_EPILOGUE(ips_ibta_init);
 
 psm2_error_t ips_ibta_fini(struct ips_proto *proto)
 {

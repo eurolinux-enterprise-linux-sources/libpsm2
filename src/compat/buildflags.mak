@@ -54,7 +54,7 @@ $(error top_srcdir must be set to include makefile fragment)
 endif
 
 export os ?= $(shell uname -s | tr '[A-Z]' '[a-z]')
-export arch := $(shell uname -p | sed -e 's,\(i[456]86\|athlon$$\),i386,')
+export arch := $(shell uname -m | sed -e 's,\(i[456]86\|athlon$$\),i386,')
 export CCARCH ?= gcc
 
 ifeq (${CCARCH},gcc)
@@ -75,7 +75,8 @@ BASECFLAGS += $(BASE_FLAGS)
 LDFLAGS += $(BASE_FLAGS)
 ASFLAGS += $(BASE_FLAGS)
 
-LDFLAGS += -Wl,--version-script psm2_compat_linker_script.map
+LINKER_SCRIPT_FILE := psm2_compat_linker_script.map
+LINKER_SCRIPT := -Wl,--version-script $(LINKER_SCRIPT_FILE)
 WERROR := -Werror
 INCLUDES := -I$(top_srcdir)/include -I$(top_srcdir)/include/$(os)-$(arch) -I$(top_srcdir)/mpspawn
 
@@ -86,16 +87,13 @@ BASECFLAGS += -fpic -fPIC
 ASFLAGS += -g3 -fpic
 
 ifeq (${CCARCH},icc)
-    BASECFLAGS += -O3 -g3 -fpic -fPIC,
-    CFLAGS += $(BASECFLAGS)
+    BASECFLAGS += -O3 -g3
     LDFLAGS += -static-intel
 else
 	ifeq (${CCARCH},gcc)
-	    CFLAGS += $(BASECFLAGS) -Wno-strict-aliasing
+	    BASECFLAGS += -Wno-strict-aliasing
 	else
-		ifeq (${CCARCH},gcc4)
-			CFLAGS += $(BASECFLAGS)
-		else
+		ifneq (${CCARCH},gcc4)
 			$(error Unknown compiler arch "${CCARCH}")
 		endif
 	endif

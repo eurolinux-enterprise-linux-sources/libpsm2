@@ -438,6 +438,10 @@ process_pending_acks(struct ips_recvhdrq *recvq))
  */
 psm2_error_t ips_recvhdrq_progress(struct ips_recvhdrq *recvq)
 {
+	/* When PSM_PERF is enabled, the following line causes the
+	   PMU to start a stop watch to measure instruction cycles of the
+	   RX speedpath of PSM.  The stop watch is stopped below. */
+	GENERIC_PERF_BEGIN(PSM_RX_SPEEDPATH_CTR);
 	struct ips_recvhdrq_state *state = recvq->state;
 	const __le32 *rhf;
 	PSMI_CACHEALIGN struct ips_recvhdrq_event rcv_ev = {.proto =
@@ -545,6 +549,11 @@ psm2_error_t ips_recvhdrq_progress(struct ips_recvhdrq *recvq)
 			if (ret == IPS_RECVHDRQ_REVISIT)
 			{
 				PSM2_LOG_MSG("leaving");
+				/* When PSM_PERF is enabled, the following line causes the
+				   PMU to stop a stop watch to measure instruction cycles of
+				   the RX speedpath of PSM.  The stop watch was started
+				   above. */
+				GENERIC_PERF_END(PSM_RX_SPEEDPATH_CTR);
 				return PSM2_OK_NO_PROGRESS;
 			}
 
@@ -631,6 +640,11 @@ psm2_error_t ips_recvhdrq_progress(struct ips_recvhdrq *recvq)
 			if (ret == IPS_RECVHDRQ_REVISIT)
 			{
 				PSM2_LOG_MSG("leaving");
+				/* When PSM_PERF is enabled, the following line causes the
+				   PMU to stop a stop watch to measure instruction cycles of
+				   the RX speedpath of PSM.  The stop watch was started
+				   above. */
+				GENERIC_PERF_END(PSM_RX_SPEEDPATH_CTR);
 				return PSM2_OK_NO_PROGRESS;
 			}
 		}
@@ -726,6 +740,11 @@ skip_packet_no_egr_update:
 	process_pending_acks(recvq);
 
 	PSM2_LOG_MSG("leaving");
+	/* When PSM_PERF is enabled, the following line causes the
+	   PMU to stop a stop watch to measure instruction cycles of
+	   the RX speedpath of PSM.  The stop watch was started
+	   above. */
+	GENERIC_PERF_END(PSM_RX_SPEEDPATH_CTR);
 	return num_hdrq_done ? PSM2_OK : PSM2_OK_NO_PROGRESS;
 }
 
@@ -825,7 +844,7 @@ psm2_error_t ips_recvhdrq_scan_cca (struct ips_recvhdrq *recvq)
 							    &ctrlscb, ctrlscb.cksum, 0);
 			}
 		}
-		else if_pt (_is_cca_becn_set(rcv_ev.p_hdr) << (IPS_RECV_EVENT_BECN - 1) ) {
+		else if_pt (0 != (_is_cca_becn_set(rcv_ev.p_hdr) << (IPS_RECV_EVENT_BECN - 1))) {
 			struct ips_epstate_entry *epstaddr = ips_epstate_lookup(recvq->epstate,
 										rcv_ev.p_hdr->connidx);
 

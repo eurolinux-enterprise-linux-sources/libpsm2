@@ -50,23 +50,42 @@
 #
 #  Copyright (c) 2003-2014 Intel Corporation. All rights reserved.
 #
-top_srcdir := ..
-include $(top_srcdir)/buildflags.mak
-CFLAGS += -DPSM_UUID=1 -Wno-unused-function
-INCLUDES += -I$(top_srcdir) -I$(top_srcidr)/libuuid
 
-${TARGLIB}-objs := psm_uuid.o
+OUTDIR = .
 
-DEPS:= $(${TARGLIB}-objs:.o=.d)
--include $(DEPS)
+this_srcdir := $(shell readlink -m .)
+top_srcdir := $(this_srcdir)/..
+BASECFLAGS += -DPSM_UUID=1 -Wno-unused-function
+INCLUDES += -I$(top_srcdir)
 
-all: ${${TARGLIB}-objs}
+${TARGLIB}-objs := psm_uuid.o parse.o pack.o unpack.o unparse.o
+${TARGLIB}-objs := $(patsubst %.o, $(OUTDIR)/%.o, ${${TARGLIB}-objs})
 
-%.o: %.c 
-	$(CC) $(CFLAGS) $(INCLUDES) -MMD -c $< -o $@
+DEPS := $(${TARGLIB}-objs:.o=.d)
+
+.PHONY: all clean
+IGNORE_DEP_TARGETS = clean
+
+all .DEFAULT: ${${TARGLIB}-objs}
+
+$(OUTDIR)/%.d: $(this_srcdir)/%.c
+	$(CC) $(CFLAGS) $(BASECFLAGS) $(INCLUDES) $< -MM -MF $@ -MQ $(@:.d=.o)
+
+$(OUTDIR)/%.o: $(this_srcdir)/%.c | ${DEPS}
+	$(CC) $(CFLAGS) $(BASECFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
-	rm -f *.o *.d *.gcda *.gcno
+	@if [ -d $(OUTDIR) ]; then \
+		cd $(OUTDIR); \
+		rm -f *.o *.d *.gcda *.gcno; \
+		cd -; \
+	fi
+
+#ifeq prevents the deps from being included during clean
+#-include line is required to pull in auto-dependecies during 2nd pass
+ifeq ($(filter $(IGNORE_DEP_TARGETS), $(MAKECMDGOALS)),)
+-include ${DEPS}
+endif
 
 install:
 	@echo "Nothing to do for install."

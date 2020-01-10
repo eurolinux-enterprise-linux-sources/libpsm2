@@ -1,18 +1,20 @@
 Summary: Intel PSM Libraries
 Name: libpsm2
-Version: 10.2.63
-Release: 2%{?dist}
+Version: 10.3.58
+Release: 1%{?dist}
 License: GPLv2 or BSD
 URL: https://github.com/01org/opa-psm2
 # Source tarball obtained by:
 # git clone https://github.com/01org/opa-psm2
 # cd opa-psm2
-# # Latest commit id is a1cb2adaedb3bd3fa84dc0bcf66333b2e598d777.
+# # Latest commit id is 0f9213e7af8d32c291d4657ff4a3279918de1e60.
 # make dist
 Source0: %{name}-%{version}.tar.gz
+Patch1: extend-fdesc-array.patch
 BuildRequires: kernel-headers >= 3.10.0-455
 BuildRequires: gcc
 BuildRequires: libuuid-devel
+BuildRequires: numactl-devel
 BuildRequires: pkgconfig(udev)
 # OPA HFI is Intel's thing
 ExclusiveArch: x86_64
@@ -38,6 +40,10 @@ Summary: Support for MPIs linked with PSM1
 Group: System Environment/Libraries
 Requires: %{name}%{?_isa} = %{version}-%{release}
 
+%global _privatelibs libpsm_infinipath[.]so[.]1.*
+%global __provides_exclude ^(%{_privatelibs})$
+%global __requires_exclude ^(%{_privatelibs})$
+
 %description compat
 Support for MPIs linked with PSM1.
 The compat library is installed in a non-standard directory to avoid
@@ -47,12 +53,14 @@ LD_LIBRARY_PATH=%{_libdir}/psm2-compat
 %prep
 %setup -q
 find . -type f -iname '*.[ch]' -exec chmod a-x '{}' ';'
+%patch1
 
 %build
 CFLAGS="%{optflags}" make %{?_smp_mflags}
 
 %install
 %make_install
+rm -f %{buildroot}%{_libdir}/*.a
 
 %post -p /sbin/ldconfig
 %postun -p /sbin/ldconfig
@@ -79,6 +87,22 @@ CFLAGS="%{optflags}" make %{?_smp_mflags}
 
 
 %changelog
+* Wed Jun 20 2018 Honggang Li <honli@redhat.com> - 10.3.58-1
+- Rebase to latest upstream release PSM2_10.3.58
+- Resolves: bz1483573
+
+* Tue Jan  9 2018 Honggang Li <honli@redhat.com> - 10.3.8-3
+- libpsm2-compat: Filter libpsm_infinipath.so.1 as private library
+- Resolves: bz1396213
+
+* Sat Oct  7 2017 Honggang Li <honli@redhat.com> - 10.3.8-2
+- BuildRequires numactl-devel.
+- Resolves: bz1452794, bz1498142
+
+* Fri Oct  6 2017 Honggang Li <honli@redhat.com> - 10.3.8-1
+- Rebase to latest upstream release 10.3.8.
+- Resolves: bz1452794, bz1498142
+
 * Mon Mar  6 2017 Honggang Li <honli@redhat.com> - 10.2.63-2
 - Make sure all C source code is not executable.
 - Resolves: bz1382802

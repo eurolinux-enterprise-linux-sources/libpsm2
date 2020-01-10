@@ -4,7 +4,7 @@
 #
 #  GPL LICENSE SUMMARY
 #
-#  Copyright(c) 2015 Intel Corporation.
+#  Copyright(c) 2017 Intel Corporation.
 #
 #  This program is free software; you can redistribute it and/or modify
 #  it under the terms of version 2 of the GNU General Public License as
@@ -20,7 +20,7 @@
 #
 #  BSD LICENSE
 #
-#  Copyright(c) 2015 Intel Corporation.
+#  Copyright(c) 2017 Intel Corporation.
 #
 #  Redistribution and use in source and binary forms, with or without
 #  modification, are permitted provided that the following conditions
@@ -48,22 +48,51 @@
 #  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 #  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
-#  Copyright (c) 2003-2014 Intel Corporation. All rights reserved.
-#
+
+
+OPTIONS =
+HISTORY = .outdirs
+HISTORIC_TARGETS = $(patsubst %, %_clean, $(shell cat $(HISTORY) 2> /dev/null))
 
 RPM_NAME := libpsm2
 
 SUBDIRS:= ptl_self ptl_ips ptl_am libuuid opa
-export build_dir := .
+top_srcdir := $(shell readlink -m .)
 
-PSM2_VERNO_MAJOR := $(shell sed -n 's/^\#define.*PSM2_VERNO_MAJOR.*0x0\?\([1-9a-f]\?[0-9a-f]\+\).*/\1/p' $(build_dir)/psm2.h)
-PSM2_VERNO_MINOR := $(shell sed -n 's/^\#define.*PSM2_VERNO_MINOR.*0x\([0-9]\?[0-9a-f]\+\).*/\1/p' $(build_dir)/psm2.h)
+# Default locations
+OUTDIR := $(top_srcdir)/build_release
+MOCK_OUTDIR := $(top_srcdir)/build_mock
+DEBUG_OUTDIR := $(top_srcdir)/build_debug
+
+# We need a temporary test variable, as the OUTDIR macro
+# can be overriden by the shell and thus not run.
+TESTOUTDIR= $(shell readlink -m $(OUTDIR))
+ifeq ($(top_srcdir), $(TESTOUTDIR))
+$(error OUTDIR cannot be the same as your source folder ${top_srcdir}))
+endif
+
+ifeq (/,$(TESTOUTDIR))
+$(error OUTDIR cannot be the / folder ))
+endif
+
+# Forces any value to be full path.
+# We don't need to override MOCK_OUTDIR or DEBUG_OUTDIR
+# as they are recursive make invocations and use OUTDIR
+ifneq ($(MAKECMDGOALS), mock)
+ifneq ($(MAKECMDGOALS), debug)
+override OUTDIR := $(shell readlink -m $(OUTDIR))
+endif
+endif
+
+
+PSM2_VERNO_MAJOR := $(shell sed -n 's/^\#define.*PSM2_VERNO_MAJOR.*0x0\?\([1-9a-f]\?[0-9a-f]\+\).*/\1/p' $(top_srcdir)/psm2.h)
+PSM2_VERNO_MINOR := $(shell sed -n 's/^\#define.*PSM2_VERNO_MINOR.*0x\([0-9]\?[0-9a-f]\+\).*/\1/p' $(top_srcdir)/psm2.h)
 PSM2_LIB_MAJOR   := $(shell printf "%d" ${PSM2_VERNO_MAJOR})
-PSM2_LIB_MINOR   := $(shell printf "%d" `sed -n 's/^\#define.*PSM2_VERNO_MINOR.*\(0x[0-9a-f]\+\).*/\1/p' $(build_dir)/psm2.h`)
-SOURCES_CHKSUM_FILES = Makefile buildflags.mak psm2_linker_script.map \
+PSM2_LIB_MINOR   := $(shell printf "%d" `sed -n 's/^\#define.*PSM2_VERNO_MINOR.*\(0x[0-9a-f]\+\).*/\1/p' $(top_srcdir)/psm2.h`)
+LINKER_SCRIPT_FILE = ${OUTDIR}/psm2_linker_script.map
+SOURCES_CHKSUM_FILES = Makefile buildflags.mak $(LINKER_SCRIPT_FILE) \
 		`find . -regex '\(.*\.h\|.*\.c\)' -not -path "./test/*" -not -path "./tools/*" -not -path "_revision.c" | sort`
 SOURCES_CHKSUM_VALUE = $(shell cat ${SOURCES_CHKSUM_FILES} | sha1sum | cut -d' ' -f 1)
-
 OPA_LIB_MAJOR := 4
 OPA_LIB_MINOR := 0
 
@@ -75,10 +104,17 @@ export OPA_LIB_MAJOR
 export OPA_LIB_MINOR
 export CCARCH ?= gcc
 export FCARCH ?= gfortran
+export AR ?= ar
 
-top_srcdir := .
 include $(top_srcdir)/buildflags.mak
-lib_build_dir := $(build_dir)
+# We need to unexport these environs as during mock testing and normal calls,
+# if they are exported then during each submake they will be evaulated again.
+# This is costly and the LINKER_SCRIPT_FILE doesn't exist until after its
+# target rule runs.
+unexport SOURCES_CHKSUM_FILES
+unexport SOURCES_CHKSUM_VALUE
+unexport LINKER_SCRIPT_FILE
+INCLUDES += -I$(top_srcdir)
 
 ifneq (x86_64,$(arch))
    ifneq (i386,$(arch))
@@ -99,7 +135,8 @@ export DESTDIR
 export INSTALL_LIB_TARG
 
 TARGLIB := libpsm2
-COMPATMAJOR := $(shell sed -n 's/^\#define.*PSM2_VERNO_COMPAT_MAJOR.*0x0\?\([1-9a-f]\?[0-9a-f]\+\).*/\1/p' $(build_dir)/psm2.h)
+COMPATMAJOR := $(shell sed -n 's/^\#define.*PSM2_VERNO_COMPAT_MAJOR.*0x0\?\([1-9a-f]\?[0-9a-f]\+\).*/\1/p' \
+             	 $(top_srcdir)/psm2.h)
 COMPATLIB := libpsm_infinipath
 
 MAJOR := $(PSM2_LIB_MAJOR)
@@ -111,6 +148,7 @@ nthreads := $(shell echo $$(( `nproc` * 2 )) )
 #  'rhel' if the host is running RHEL.
 #  'suse' if the host is running SUSE.
 #  'fedora' if the host is running Fedora.
+#  'ubuntu' if the host is running Ubuntu.
 #
 # The DISTRO variable is used subsequently for variable
 # behaviors of the 3 distros.
@@ -120,7 +158,10 @@ DISTRO := $(shell . /etc/os-release; echo $$ID)
 # By default the following two variables have the following values:
 LIBPSM2_COMPAT_CONF_DIR := /etc
 LIBPSM2_COMPAT_SYM_CONF_DIR := /etc
-SPEC_FILE_RELEASE_DIST :=#nothing
+# We can't set SPEC_FILE_RELEASE_DIST to an empty value, a space will result.
+# It then messes up sed operations for PSM_CUDA=1.
+# So leaving the commented out line here as documentation to NOT set it.
+# SPEC_FILE_RELEASE_DIST :=
 UDEV_40_PSM_RULES := %{_udevrulesdir}/40-psm.rules
 
 ifeq (fedora,$(DISTRO))
@@ -135,26 +176,42 @@ else ifeq (sles,${DISTRO})
 	# Insert code specific to SLES here.
 endif
 
+ifdef PSM_CUDA
+#Value needs to be something without spaces or dashes '-'
+SPEC_FILE_RELEASE_DIST += cuda
+endif
+
 export 	LIBPSM2_COMPAT_CONF_DIR
 
 # The desired version number comes from the most recent tag starting with "v"
-VERSION := $(shell if [ -e .git ] ; then  git  describe --tags --abbrev=0 --match='v*' | sed -e 's/^v//' -e 's/-/_/'; else echo "version" ; fi)
+ifeq (true, $(shell git rev-parse --is-inside-work-tree 2>/dev/null))
+ISGIT := 1 # Cache the result for later
+# Note, we don't define ISGIT if we are not in a git folder
+VERSION := $(shell git describe --tags --abbrev=0 --match='psm-v*' | sed -e 's/^psm-v//' -e 's/-/_/')
+else
+ISGIT := 0
+VERSION := version
+endif
 
 # If we have a file called 'rpm_release_extension' (as on github),
 # we take the release extension number from this file
-RELEASE_EXT := $(shell if [ -e rpm_release_extension ] ; then cat rpm_release_extension; fi)
-CURRENTSHA := $(shell if [ -e .git -a -f rpm_release_extension ] ; then git log --pretty=format:'%h' -n 1; fi)
-RPMEXTHASH := $(shell if [ -e .git -a -f rpm_release_extension ] ; then git log --pretty=format:'%h' -n 1 rpm_release_extension; fi)
-
-# On github, the last commit for each release should be the one to bump up
-# the release extension number in 'rpm_release_extension'. Further commits
-# are counted here and appended to the final rpm name to distinguish commits
-# present only on github
-NCOMMITS := $(shell if [ -e .git -a -f rpm_release_extension ] ; then git log $(RPMEXTHASH)..$(CURRENTSHA) --pretty=oneline | wc -l; fi)
+RELEASE_EXT := $(shell if [ -e rpm_release_extension ] ;\
+                       then cat rpm_release_extension; fi)
+CURRENTSHA := $(shell if [ $(ISGIT) = 1 -a -f rpm_release_extension ] ;\
+                      then git log --pretty=format:'%h' -n 1; fi)
+RPMEXTHASH := $(shell if [ $(ISGIT) = 1 -a -f rpm_release_extension ] ;\
+                      then git log --pretty=format:'%h' -n 1 rpm_release_extension; fi)
 
 # This logic should kick-in only on github
 ifdef RELEASE_EXT
 ifneq ($(CURRENTSHA), $(RPMEXTHASH))
+# On github, the last commit for each release should be the one to bump up
+# the release extension number in 'rpm_release_extension'. Further commits
+# are counted here and appended to the final rpm name to distinguish commits
+# present only on github
+NCOMMITS := $(shell if [ $(ISGIT) = 1 -a -f rpm_release_extension ] ;\
+                    then git log --children $(RPMEXTHASH)..$(CURRENTSHA) \
+                    --pretty=oneline . | wc -l; fi)
 RELEASE := $(RELEASE_EXT)_$(NCOMMITS)
 endif
 endif
@@ -162,20 +219,23 @@ endif
 # The desired release number comes the git describe following the version which
 # is the number of commits since the version tag was planted suffixed by the g<commitid>
 ifndef RELEASE
+RELTAG := "psm-v$(VERSION)"
 RELEASE := $(shell if [ -f rpm_release_extension ]; then cat rpm_release_extension;\
-		   elif [ -e .git ] ; then git describe --tags --long --match='v*' | \
-				sed -e 's/v[0-9.]*-\(.*\)/\1/' -e 's/-/_/' | \
-				sed -e 's/_g.*$$//'; \
+		   elif [ $(ISGIT) = 1 ] ; then git rev-list $(RELTAG)..HEAD -- . | wc -l; \
 		   else echo "release" ; fi)
 endif
 
-DIST_SHA := ${shell if [ -e .git ] ; then git log -n1 --pretty=format:%H ; \
+DIST_SHA := ${shell if [ $(ISGIT) = 1 ] ; then git log -n1 --pretty=format:%H .; \
 		else echo DIST_SHA ; fi}
 
 # Concatenated version and release
+ifndef VERSION_RELEASE_OVERRIDE
 VERSION_RELEASE := $(VERSION).$(RELEASE)
+else
+VERSION_RELEASE := ${VERSION_RELEASE_OVERRIDE}
+endif
 
-LDLIBS := -lrt -lpthread -ldl ${EXTRA_LIBS}
+LDLIBS := -lrt -ldl -lnuma ${EXTRA_LIBS} -pthread
 
 PKG_CONFIG ?= pkg-config
 
@@ -193,44 +253,101 @@ export UDEVDIR
 #    target.
 DIST := ${RPM_NAME}-${VERSION_RELEASE}
 
-all: symlinks
-	for subdir in $(SUBDIRS); do \
-		$(MAKE) -j $(nthreads) -C $$subdir $@ ;\
+# If user has empty RPM NAME BASEEXT (defined or not), then attempt to
+# see if we are running on SLES 12.3 or newer.
+# If we are, then change the base package name, but not the supporting
+# packages to libpsm2-2. Do note this requires support both in the Makefile
+# specfile target rule as well as changes in the libpsm2.spec.in
+# file as well.
+ifeq ($(RPM_NAME_BASEEXT),)
+# Detect current version of the OS
+OS := $(shell grep -m1 NAME /etc/os-release | cut -f 2 -d\")
+OSVERSION := $(shell grep VERSION_ID /etc/os-release | cut -f 2 -d\" | cut -f 1 -d.)
+OSSUBVERSION := $(shell grep VERSION_ID /etc/os-release | cut -f 2 -d\" | cut -f 2 -d.)
+
+override RPM_NAME_BASEEXT := $(shell \
+    if [ "$(OS)" = "SLES" ]; then \
+       if [ "$(OSVERSION)" \> "11" ]; then \
+          if [ "$(OSSUBVERSION)" \> "2" ]; then \
+             echo "-2"; \
+          fi \
+       fi \
+    fi)
+endif
+
+all: outdir symlinks
+	@if [ ! -e $(HISTORY) ] || [ -z "`grep -E '^$(OUTDIR)$$' $(HISTORY)`" ]; then \
+		echo $(OUTDIR) >> $(HISTORY); \
+	fi
+	# Our buildflags.mak exports all variables, all are propogated to submakes.
+	@for subdir in $(SUBDIRS); do \
+		mkdir -p $(OUTDIR)/$$subdir; \
+		$(MAKE) -j $(nthreads) -C $$subdir OUTDIR=$(OUTDIR)/$$subdir; \
 	done
-	$(MAKE) -j $(nthreads) ${TARGLIB}.so
-	$(MAKE) -j $(nthreads) -C compat all
+	$(MAKE) -j $(nthreads) $(OUTDIR)/${TARGLIB}.so
+	$(MAKE) -j $(nthreads) $(OUTDIR)/${TARGLIB}.a
+	@mkdir -p $(OUTDIR)/compat
+	$(MAKE) -j $(nthreads) -C compat OUTDIR=$(OUTDIR)/compat
 
-clean:
-	rm -f _revision.c
-	for subdir in $(SUBDIRS) ; do \
-		$(MAKE) -j $(nthreads) -C $$subdir $@ ;\
-	done
-	$(MAKE) -j $(nthreads) -C compat clean
-	rm -f *.o *.d *.gcda *.gcno ${TARGLIB}.so*
+%_clean:
+	make OUTDIR=$* clean
 
-distclean: cleanlinks clean
-	rm -f ${RPM_NAME}.spec
-	rm -f ${DIST}.tar.gz
-	rm -fr temp.[0-9]*
+clean: cleanlinks
+	rm -rf ${OUTDIR}
+	@if [ -e $(HISTORY) ]; then \
+		grep -v -E "^$(OUTDIR)$$" $(HISTORY) > $(HISTORY)_tmp; \
+		mv $(HISTORY)_tmp $(HISTORY); \
+		if [ "`wc -c $(HISTORY) | cut -d ' ' -f 1`" -eq 0 ]; then \
+			rm -f $(HISTORY); \
+		fi; \
+	fi
 
-.PHONY: symlinks
+mock: OUTDIR := $(MOCK_OUTDIR)
+mock:
+	$(MAKE) OUTDIR=$(OUTDIR) PSM2_MOCK_TESTING=1
+
+debug: OUTDIR := $(DEBUG_OUTDIR)
+debug: OPTIONS := PSM_DEBUG=1
+debug:
+	$(MAKE) OUTDIR=$(OUTDIR) OPTIONS=$(OPTIONS)
+
+test_clean:
+	if [ -d ./test ]; then \
+		$(MAKE) -C test clean; \
+	fi
+
+specfile_clean:
+	rm -f ${OUTDIR}/${RPM_NAME}.spec
+
+distclean: specfile_clean cleanlinks $(HISTORIC_TARGETS) test_clean
+	rm -rf ${OUTDIR}/${DIST}
+	rm -f ${OUTDIR}/${DIST}.tar.gz
+	rm -fr temp.*
+
+outdir:
+	mkdir -p ${OUTDIR}
+
 symlinks:
-	@[[ -L $(build_dir)/include/linux-x86_64 ]] || \
-		ln -sf linux-i386 $(build_dir)/include/linux-x86_64
+	@test -L $(top_srcdir)/include/linux-x86_64 || \
+		ln -sf linux-i386 $(top_srcdir)/include/linux-x86_64
 
 cleanlinks:
-	rm -f $(build_dir)/include/linux-x86_64
+	rm -rf $(top_srcdir)/include/linux-x86_64
 
 install: all
-	for subdir in $(SUBDIRS); do \
-		$(MAKE) -j $(nthreads) -C $$subdir $@ ;\
+	for subdir in $(SUBDIRS) ; do \
+		mkdir -p $(OUTDIR)/$$subdir ; \
+		$(MAKE) -j $(nthreads) -C $$subdir OUTDIR=$(OUTDIR)/$$subdir install ; \
 	done
-	$(MAKE) -j $(nthreads) -C compat install
-	install -D ${TARGLIB}.so.${MAJOR}.${MINOR} \
+	$(MAKE) -j $(nthreads) $(OUTDIR)/${TARGLIB}.so OUTDIR=$(OUTDIR)
+	$(MAKE) -j $(nthreads) -C compat OUTDIR=$(OUTDIR)/compat install
+	install -D $(OUTDIR)/${TARGLIB}.so.${MAJOR}.${MINOR} \
 		${DESTDIR}${INSTALL_LIB_TARG}/${TARGLIB}.so.${MAJOR}.${MINOR}
 	(cd ${DESTDIR}${INSTALL_LIB_TARG} ; \
 		ln -sf ${TARGLIB}.so.${MAJOR}.${MINOR} ${TARGLIB}.so.${MAJOR} ; \
 		ln -sf ${TARGLIB}.so.${MAJOR} ${TARGLIB}.so)
+	install -D $(OUTDIR)/${TARGLIB}.a \
+		${DESTDIR}${INSTALL_LIB_TARG}/${TARGLIB}.a
 	install -m 0644 -D psm2.h ${DESTDIR}/usr/include/psm2.h
 	install -m 0644 -D psm2_mq.h ${DESTDIR}/usr/include/psm2_mq.h
 	install -m 0644 -D psm2_am.h ${DESTDIR}/usr/include/psm2_am.h
@@ -254,11 +371,13 @@ endif
 	install -m 0644 -D include/psm2_mock_testing.h ${DESTDIR}/usr/include/hfi1diag/psm2_mock_testing.h
 	install -m 0644 -D include/hfi1_deprecated.h ${DESTDIR}/usr/include/hfi1diag/hfi1_deprecated.h
 	install -m 0644 -D include/opa_revision.h ${DESTDIR}/usr/include/hfi1diag/opa_revision.h
+	install -m 0644 -D psmi_wrappers.h ${DESTDIR}/usr/include/hfi1diag/psmi_wrappers.h
 
-specfile:
-	sed -e 's/@VERSION@/'${VERSION_RELEASE}'/g' ${RPM_NAME}.spec.in | \
+specfile: outdir specfile_clean
+	sed -e 's/@VERSION@/'${VERSION_RELEASE}'/g' libpsm2.spec.in | \
 		sed -e 's/@TARGLIB@/'${TARGLIB}'/g' \
 			-e 's/@RPM_NAME@/'${RPM_NAME}'/g' \
+			-e 's/@RPM_NAME_BASEEXT@/'${RPM_NAME_BASEEXT}'/g' \
 			-e 's/@COMPATLIB@/'${COMPATLIB}'/g' \
 			-e 's/@COMPATMAJOR@/'${COMPATMAJOR}'/g' \
 			-e 's;@UDEVDIR@;'${UDEVDIR}';g' \
@@ -266,21 +385,25 @@ specfile:
 			-e 's/@MINOR@/'${MINOR}'/g' \
 			-e 's:@LIBPSM2_COMPAT_CONF_DIR@:'${LIBPSM2_COMPAT_CONF_DIR}':g' \
 			-e 's:@LIBPSM2_COMPAT_SYM_CONF_DIR@:'${LIBPSM2_COMPAT_SYM_CONF_DIR}':g' \
-			-e 's/@SPEC_FILE_RELEASE_DIST@/'${SPEC_FILE_RELEASE_DIST}'/g'  \
+			-e 's;@SPEC_FILE_RELEASE_DIST@;'${SPEC_FILE_RELEASE_DIST}';g'  \
 			-e 's/@DIST_SHA@/'${DIST_SHA}'/g' > \
-		${RPM_NAME}.spec
+		${OUTDIR}/${RPM_NAME}.spec
 	if [ -f /etc/redhat-release ] && [ `grep -o "[0-9.]*" /etc/redhat-release | cut -d"." -f1` -lt 7 ]; then \
-		sed -i 's;@40_PSM_RULES@;'${UDEVDIR}'/rules.d/40-psm.rules;g' ${RPM_NAME}.spec; \
+		sed -i 's;@40_PSM_RULES@;'${UDEVDIR}'/rules.d/40-psm.rules;g' ${OUTDIR}/${RPM_NAME}.spec; \
 	else \
-		sed -i 's;@40_PSM_RULES@;'${UDEV_40_PSM_RULES}';g' ${RPM_NAME}.spec; \
+		sed -i 's;@40_PSM_RULES@;'${UDEV_40_PSM_RULES}';g' ${OUTDIR}/${RPM_NAME}.spec; \
 	fi
 
+# We can't totally prevent two make dist calls in a row from packaging
+# the previous make dist, unless we switch to using a dedicated ./src folder
+# That will come in the next major revision of the Makefile for now we can
+# prevent the easy and default cases
 dist: distclean
-	mkdir -p ${DIST}
-	for x in $$(/usr/bin/find .						\
+	mkdir -p ${OUTDIR}/${DIST}
+	for x in $$(/usr/bin/find . 								\
 			-name ".git"                           -prune -o	\
 			-name "cscope*"                        -prune -o	\
-			-name "${DIST}"                        -prune -o	\
+			-name "$(shell realpath --relative-to=${top_srcdir} ${OUTDIR})" -prune -o	\
 			-name "*.orig"                         -prune -o	\
 			-name "*~"                             -prune -o	\
 			-name "#*"                             -prune -o	\
@@ -290,15 +413,16 @@ dist: distclean
 			-name "psm.supp"                       -prune -o	\
 			-name "test"                           -prune -o	\
 			-name "tools"                          -prune -o	\
+			-name "artifacts"                      -prune -o	\
 			-print); do \
 		dir=$$(dirname $$x); \
-		mkdir -p ${DIST}/$$dir; \
-		[ ! -d $$x ] && cp $$x ${DIST}/$$dir; \
+		mkdir -p ${OUTDIR}/${DIST}/$$dir; \
+		[ ! -d $$x ] && cp $$x ${OUTDIR}/${DIST}/$$dir; \
 	done
-	if [ -e .git ] ; then git log -n1 --pretty=format:%H > ${DIST}/COMMIT ; fi
-	echo ${RELEASE} > ${DIST}/rpm_release_extension
-	tar czvf ${DIST}.tar.gz ${DIST}
-	rm -rf ${DIST}
+	if [ $(ISGIT) = 1 ] ; then git log -n1 --pretty=format:%H . > ${OUTDIR}/${DIST}/COMMIT ; fi
+	echo ${RELEASE} > ${OUTDIR}/${DIST}/rpm_release_extension
+	cd ${OUTDIR}; tar czvf ${DIST}.tar.gz ${DIST}
+	@echo "${DIST}.tar.gz is located in ${OUTDIR}/${DIST}.tar.gz"
 
 ofeddist:
 	$(MAKE) -j $(nthreads) dist
@@ -316,6 +440,7 @@ ${TARGLIB}-objs := ptl_am/am_reqrep_shmem.o	\
 		   ptl_am/am_reqrep.o		\
 		   ptl_am/ptl.o			\
 		   ptl_am/cmarwu.o		\
+		   ptl_am/am_cuda_memhandle_cache.o  \
 		   psm_context.o		\
 		   psm_ep.o			\
 		   psm_ep_connect.o		\
@@ -330,8 +455,14 @@ ${TARGLIB}-objs := ptl_am/am_reqrep_shmem.o	\
 		   psm_mpool.o			\
 		   psm_stats.o			\
 		   psm_memcpy.o			\
+		   psm_mock.o			\
 		   psm.o			\
+		   psm_perf.o			\
 		   libuuid/psm_uuid.o		\
+		   libuuid/parse.o		\
+		   libuuid/pack.o		\
+		   libuuid/unpack.o		\
+		   libuuid/unparse.o		\
 		   ptl_ips/ptl.o		\
 		   ptl_ips/ptl_rcvthread.o	\
 		   ptl_ips/ipserror.o		\
@@ -357,32 +488,40 @@ ${TARGLIB}-objs := ptl_am/am_reqrep_shmem.o	\
 		   ptl_ips/ips_writehdrq.o	\
 		   ptl_self/ptl.o		\
 		   opa/*.o			\
-		   psm_diags.o
+		   psm_diags.o 			\
+		   psmi_wrappers.o              \
+		   psm_gdrcpy.o
+
+${TARGLIB}-objs := $(patsubst %.o, ${OUTDIR}/%.o, ${${TARGLIB}-objs})
 
 DEPS:= $(${TARGLIB}-objs:.o=.d)
 -include $(DEPS)
 
-${TARGLIB}.so: ${lib_build_dir}/${TARGLIB}.so.${MAJOR}
+${OUTDIR}/${TARGLIB}.so: ${OUTDIR}/${TARGLIB}.so.${MAJOR}
 	ln -fs ${TARGLIB}.so.${MAJOR}.${MINOR} $@
 
-${TARGLIB}.so.${MAJOR}: ${lib_build_dir}/${TARGLIB}.so.${MAJOR}.${MINOR}
+${OUTDIR}/${TARGLIB}.so.${MAJOR}: ${OUTDIR}/${TARGLIB}.so.${MAJOR}.${MINOR}
 	ln -fs ${TARGLIB}.so.${MAJOR}.${MINOR} $@
 
 # when we build the shared library, generate a revision and date
 # string in it, for easier id'ing when people may have copied the
 # file around.  Generate it such that the ident command can find it
 # and strings -a | grep OPA does a reasonable job as well.
-${TARGLIB}.so.${MAJOR}.${MINOR}: ${${TARGLIB}-objs}
-	echo "char psmi_hfi_IFS_version[]=\"`printenv RELEASE_TAG`\";" > ${lib_build_dir}/_revision.c
-	date +'char psmi_hfi_build_timestamp[] ="%F %T%:z";' >> ${lib_build_dir}/_revision.c
-	echo "char psmi_hfi_sources_checksum[] =\"${SOURCES_CHKSUM_VALUE}\";" >> ${lib_build_dir}/_revision.c
-	echo "char psmi_hfi_git_checksum[] =\"`git rev-parse HEAD`\";" >> ${lib_build_dir}/_revision.c
-	$(CC) -c $(BASECFLAGS) $(INCLUDES) _revision.c -o _revision.o
-	$(CC) $(LDFLAGS) -o $@ -Wl,-soname=${TARGLIB}.so.${MAJOR} -shared \
-		${${TARGLIB}-objs} _revision.o -Lopa $(LDLIBS)
+$(OUTDIR)/${TARGLIB}.so.${MAJOR}.${MINOR}: ${${TARGLIB}-objs} $(LINKER_SCRIPT_FILE)
+	echo "char psmi_hfi_IFS_version[]=\"`printenv RELEASE_TAG`\";" > ${OUTDIR}/_revision.c
+	date -u -d@$${SOURCE_DATE_EPOCH:-$$(date +%s)} +'char psmi_hfi_build_timestamp[] ="%F %T%:z";' >> ${OUTDIR}/_revision.c
+	echo "char psmi_hfi_sources_checksum[] =\"${SOURCES_CHKSUM_VALUE}\";" >> ${OUTDIR}/_revision.c
+	echo "char psmi_hfi_git_checksum[] =\"`git rev-parse HEAD`\";" >> ${OUTDIR}/_revision.c
+	$(CC) -c $(CFLAGS) $(BASECFLAGS) $(INCLUDES) ${OUTDIR}/_revision.c -o $(OUTDIR)/_revision.o
+	$(CC) $(LINKER_SCRIPT) $(LDFLAGS) -o $@ -Wl,-soname=${TARGLIB}.so.${MAJOR} -shared \
+		${${TARGLIB}-objs} $(OUTDIR)/_revision.o -Lopa $(LDLIBS)
 
-%.o: %.c
-	$(CC) $(CFLAGS) $(INCLUDES) -MMD -c $< -o $@
+$(OUTDIR)/${TARGLIB}.a: $(OUTDIR)/${TARGLIB}.so.${MAJOR}.${MINOR}
+	$(AR) rcs $(OUTDIR)/${TARGLIB}.a ${${TARGLIB}-objs} $(OUTDIR)/_revision.o
 
-.PHONY: $(SUBDIRS)
+${OUTDIR}/%.o: ${top_srcdir}/%.c
+	$(CC) $(CFLAGS) $(BASECFLAGS) $(INCLUDES) -MMD -c $< -o $@
 
+$(LINKER_SCRIPT_FILE): psm2_linker_script_map.in
+	sed "s/_psm2_additional_globals_;/$(PSM2_ADDITIONAL_GLOBALS)/" \
+	     psm2_linker_script_map.in > ${OUTDIR}/psm2_linker_script.map

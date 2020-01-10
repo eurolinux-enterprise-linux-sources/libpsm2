@@ -51,8 +51,6 @@
 
 */
 
-/* Copyright (c) 2003-2014 Intel Corporation. All rights reserved. */
-
 /* This file contains hfi service routine interface used by the low */
 /* level hfi protocol code. */
 
@@ -71,8 +69,8 @@
 #include <time.h>
 
 #ifdef PSM_VALGRIND
-#include "valgrind/valgrind.h"
-#include "valgrind/memcheck.h"
+#include <valgrind/valgrind.h>
+#include <valgrind/memcheck.h>
 #endif
 
 #include "ipserror.h"
@@ -126,7 +124,7 @@ int hfi_manage_rcvq(struct _hfi_ctrl *ctrl, uint32_t stop_start)
 {
 	struct hfi1_cmd cmd;
 
-	cmd.type = HFI1_CMD_RECV_CTRL;
+	cmd.type = PSMI_HFI_CMD_RECV_CTRL;
 	cmd.len = 0;
 	cmd.addr = (uint64_t) stop_start;
 
@@ -146,7 +144,7 @@ int hfi_event_ack(struct _hfi_ctrl *ctrl, __u64 ackbits)
 {
 	struct hfi1_cmd cmd;
 
-	cmd.type = HFI1_CMD_ACK_EVENT;
+	cmd.type = PSMI_HFI_CMD_ACK_EVENT;
 	cmd.len = 0;
 	cmd.addr = ackbits;
 
@@ -170,7 +168,7 @@ int hfi_poll_type(struct _hfi_ctrl *ctrl, uint16_t poll_type)
 {
 	struct hfi1_cmd cmd;
 
-	cmd.type = HFI1_CMD_POLL_TYPE;
+	cmd.type = PSMI_HFI_CMD_POLL_TYPE;
 	cmd.len = 0;
 	cmd.addr = (uint64_t) poll_type;
 
@@ -189,14 +187,18 @@ int hfi_set_pkey(struct _hfi_ctrl *ctrl, uint16_t pkey)
 {
 	struct hfi1_cmd cmd;
 
-	cmd.type = HFI1_CMD_SET_PKEY;
+	cmd.type = PSMI_HFI_CMD_SET_PKEY;
 	cmd.len = 0;
 	cmd.addr = (uint64_t) pkey;
 
+	_HFI_VDBG("Setting context pkey to %x.\n", (unsigned int) pkey);
 	if (hfi_cmd_write(ctrl->fd, &cmd, sizeof(cmd)) == -1) {
-		if (errno != EINVAL)
-			_HFI_INFO("set pkey failed: %s\n", strerror(errno));
+		_HFI_INFO("Setting context pkey to %x failed: %s\n",
+			  (unsigned int) pkey, strerror(errno));
 		return -1;
+	} else {
+		_HFI_VDBG("Successfully set context pkey to %x.\n",
+			(unsigned int) pkey);
 	}
 	return 0;
 }
@@ -211,7 +213,7 @@ int hfi_reset_context(struct _hfi_ctrl *ctrl)
 {
 	struct hfi1_cmd cmd;
 
-	cmd.type = HFI1_CMD_CTXT_RESET;
+	cmd.type = PSMI_HFI_CMD_CTXT_RESET;
 	cmd.len = 0;
 	cmd.addr = 0;
 

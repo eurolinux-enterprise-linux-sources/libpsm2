@@ -137,7 +137,7 @@ __psm2_error_register_handler(psm2_ep_t ep, const psm2_ep_errhandler_t errhandle
 PSMI_API_DECL(psm2_error_register_handler)
 
 psm2_error_t
-psmi_handle_error(psm2_ep_t ep, psm2_error_t error, const char *buf, ...)
+MOCKABLE (psmi_handle_error)(psm2_ep_t ep, psm2_error_t error, const char *buf, ...)
 {
 	va_list argptr;
 	int syslog_level;
@@ -153,7 +153,7 @@ psmi_handle_error(psm2_ep_t ep, psm2_error_t error, const char *buf, ...)
 	va_end(argptr);
 	token.err_string[PSM2_ERRSTRING_MAXLEN - 1] = '\0';
 
-	/* Unless the user has set PSM_NO_VERBOSE_ERRORS, always print errors to
+	/* Unless the user has set PSM2_NO_VERBOSE_ERRORS, always print errors to
 	 * console */
 	c = getenv("PSM2_NO_VERBOSE_ERRORS");
 	console_print = 0;
@@ -191,6 +191,7 @@ psmi_handle_error(psm2_ep_t ep, psm2_error_t error, const char *buf, ...)
 
 	return newerr;
 }
+MOCK_DEF_EPILOGUE(psmi_handle_error);
 
 /* Returns the "worst" error out of errA and errB */
 psm2_error_t psmi_error_cmp(psm2_error_t errA, psm2_error_t errB)
@@ -247,7 +248,7 @@ struct psmi_error_item psmi_error_items[] = {
 	{LOG_CRIT, "Ran out of memory"},	/* PSM2_NO_MEMORY = 4 */
 	{PSMI_NOLOG, "PSM has not been initialized by psm2_init"},	/* PSM2_INIT_NOT_INIT = 5 */
 	{LOG_INFO, "API version passed in psm2_init is incompatible"},	/* PSM2_INIT_BAD_API_VERSION = 6 */
-	{PSMI_NOLOG, "PSM Could not set affinity"},	/* PSM_NO_AFFINITY = 7 */
+	{PSMI_NOLOG, "PSM Could not set affinity"},	/* PSM2_NO_AFFINITY = 7 */
 	{LOG_ALERT, "PSM Unresolved internal error"},	/* PSM2_INTERNAL_ERR = 8 */
 	{LOG_CRIT, "PSM could not set up shared memory segment"},	/* PSM2_SHMEM_SEGMENT_ERR = 9 */
 	{PSMI_NOLOG, "PSM option is a read-only option"},	/* PSM2_OPT_READONLY = 10 */
@@ -281,7 +282,7 @@ struct psmi_error_item psmi_error_items[] = {
 	{PSMI_NOLOG, "unknown 37"},
 	{PSMI_NOLOG, "unknown 38"},
 	{PSMI_NOLOG, "unknown 39"},
-	{PSMI_NOLOG, "Unknown/unresolved connection status (other errors occured)"},	/* PSM2_EPID_UNKNOWN = 40 */
+	{PSMI_NOLOG, "Unknown/unresolved connection status (other errors occurred)"},	/* PSM2_EPID_UNKNOWN = 40 */
 	{PSMI_NOLOG, "Endpoint could not be reached"},	/* PSM2_EPID_UNREACHABLE = 41 */
 	{PSMI_NOLOG, "unknown 42"},
 	{LOG_CRIT, "Invalid node (mismatch in bit width 32/64 or byte order)"},	/* PSM2_EPID_INVALID_NODE = 43 */

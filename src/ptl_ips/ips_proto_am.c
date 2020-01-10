@@ -54,6 +54,7 @@
 /* Copyright (c) 2003-2014 Intel Corporation. All rights reserved. */
 
 #include "psm_user.h"
+#include "psm_mq_internal.h"
 #include "psm2_am.h"
 #include "psm_am_internal.h"
 #include "ips_proto.h"
@@ -94,7 +95,7 @@ static mpool_t ips_am_msg_pool;
 #define calc_optimal_num_reply_slots(nslots) (((nslots)*2 / 3) + 1)
 
 psm2_error_t
-ips_proto_am_init(struct ips_proto *proto,
+MOCKABLE(ips_proto_am_init)(struct ips_proto *proto,
 		  int num_send_slots,
 		  uint32_t imm_size,
 		  struct ips_proto_am *proto_am)
@@ -151,6 +152,7 @@ ips_proto_am_init(struct ips_proto *proto,
 fail:
 	return err;
 }
+MOCK_DEF_EPILOGUE(ips_proto_am_init);
 
 psm2_error_t ips_proto_am_fini(struct ips_proto_am *proto_am)
 {
@@ -408,7 +410,8 @@ ips_am_run_handler(const struct ips_message_header *p_hdr,
 {
 	struct ips_am_token token;
 	int nargs = p_hdr->amhdr_nargs;
-	psm2_am_handler_fn_t hfn;
+	int ret;
+	struct psm2_ep_am_handle_entry *hentry;
 	psm2_amarg_t *args = (psm2_amarg_t *)p_hdr->data;
 
 	token.tok.flags = p_hdr->flags;
@@ -447,10 +450,23 @@ ips_am_run_handler(const struct ips_message_header *p_hdr,
 		paylen -= p_hdr->amhdr_len;
 	}
 
-	hfn = psm_am_get_handler_function(proto_am->proto->ep,
+	hentry = psm_am_get_handler_function(proto_am->proto->ep,
 			p_hdr->amhdr_hidx);
 
-	int ret = hfn(&token, args, nargs, payload, paylen);
+	/* Note a guard here for hentry != NULL is not needed because at
+	 * initialization, a psmi_assert_always() assure the entry will be
+	 * non-NULL. */
+
+	if (likely(hentry->version == PSM2_AM_HANDLER_V2)) {
+		psm2_am_handler_2_fn_t hfn2 =
+				(psm2_am_handler_2_fn_t)hentry->hfn;
+		ret = hfn2(&token, args, nargs, payload, paylen, hentry->hctx);
+	} else {
+		psm2_am_handler_fn_t hfn1 =
+				(psm2_am_handler_fn_t)hentry->hfn;
+		ret = hfn1(&token, args, nargs, payload, paylen);
+	}
+
 	return ret;
 }
 
@@ -482,7 +498,7 @@ ips_proto_am_handle_outoforder_queue()
 		if (prev->next == NULL)
 			ips_am_outoforder_q.tail = prev;
 
-		psmi_sysbuf_free(msg->payload);
+		psmi_mq_sysbuf_free(msg->proto_am->proto->mq, msg->payload);
 		psmi_mpool_put(msg);
 
 		msg = prev->next;
@@ -539,14 +555,22 @@ int ips_proto_am(struct ips_recvhdrq_event *rcv_ev)
 
 		psmi_assert(paylen == 0 || payload);
 		msg = psmi_mpool_get(ips_am_msg_pool);
-		msg_payload = psmi_sysbuf_alloc(
-				ips_recvhdrq_event_paylen(rcv_ev));
-		if (unlikely(msg == NULL || msg_payload == NULL)) {
+		if (unlikely(msg == NULL)) {
 			/* Out of memory, drop the packet. */
-			printf("%d OOM dropping %d\n", getpid(), send_msgseq);
 			flow->recv_seq_num.psn_num =
 				(flow->recv_seq_num.psn_num - 1) &
 				rcv_ev->proto->psn_mask;
+			return IPS_RECVHDRQ_BREAK;
+		}
+		msg_payload = psmi_mq_sysbuf_alloc(
+				msg->proto_am->proto->mq,
+				ips_recvhdrq_event_paylen(rcv_ev));
+		if (unlikely(msg_payload == NULL)) {
+			/* Out of memory, drop the packet. */
+			flow->recv_seq_num.psn_num =
+				(flow->recv_seq_num.psn_num - 1) &
+				rcv_ev->proto->psn_mask;
+			psmi_mpool_put(msg);
 			return IPS_RECVHDRQ_BREAK;
 		}
 

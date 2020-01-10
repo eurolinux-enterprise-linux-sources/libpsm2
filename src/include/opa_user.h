@@ -51,8 +51,6 @@
 
 */
 
-/* Copyright (c) 2003-2014 Intel Corporation. All rights reserved. */
-
 #ifndef OPA_USER_H
 #define OPA_USER_H
 
@@ -121,7 +119,10 @@
 #define HFI_RHF_DCERR 0x00800000
 #define HFI_RHF_DCUNCERR 0x00400000
 #define HFI_RHF_KHDRLENERR 0x00200000
-#define HFI_RHF_ERR_MASK 0xFFE00000
+/* Change from 0xFFE00000 to 0xFDE00000, so that we don't commit to the
+ * error path on a SeqErr too soon - with RSM, the HFI may report a
+ * false SeqErr condition */
+#define HFI_RHF_ERR_MASK 0xFDE00000
 
 /* TidFlow related bits */
 #define HFI_TF_SEQNUM_SHIFT                 0
@@ -231,17 +232,24 @@
 	(((val) >> HFI_KHDR_TIDCTRL_SHIFT) & \
 	HFI_KHDR_TIDCTRL_MASK)
 
+#ifdef PSM_CUDA
+extern int is_driver_gpudirect_enabled;
+
+static __inline__ int _psmi_is_driver_gpudirect_enabled() __attribute__((always_inline));
+
+static __inline__ int
+_psmi_is_driver_gpudirect_enabled()
+{
+	return is_driver_gpudirect_enabled;
+}
+#define PSMI_IS_DRIVER_GPUDIRECT_ENABLED _psmi_is_driver_gpudirect_enabled()
+#endif
+
 /* this portion only defines what we currently use */
 struct hfi_pbc {
 	__u32 pbc0;
-
-	union {
-		struct {
-			__u16 PbcStaticRateControlCnt;
-			__u16 fill1;
-		};
-		__u32 pbc1;
-	};
+	__u16 PbcStaticRateControlCnt;
+	__u16 fill1;
 };
 
 /* hfi kdeth header format */
@@ -290,7 +298,13 @@ struct hfi_kdeth {
 #define HFI_MESSAGE_HDR_SIZE_HFI       (HFI_MESSAGE_HDR_SIZE-20)
 /* SPIO includes 8B PBC and message header */
 #define HFI_SPIO_HDR_SIZE      (8+56)
-/* SDMA includes 8B sdma hdr, 8B PBC, and message header */
+/*
+ * SDMA includes 8B sdma hdr, 8B PBC, and message header.
+ * If we are using GPU workloads, we need to set a new
+ * "flags" member which takes another 2 bytes in the
+ * sdma hdr. We let the driver know of this 2 extra bytes
+ * at runtime when we set the length for the iovecs.
+ */
 #define HFI_SDMA_HDR_SIZE      (8+8+56)
 
 /* functions for extracting fields from rcvhdrq entries for the driver.
@@ -600,12 +614,26 @@ static __inline__ void hfi_tidflow_set_entry(struct _hfi_ctrl *ctrl,
 					 uint32_t flowid, uint32_t genval,
 					 uint32_t seqnum)
 {
+/* For proper behavior with RSM interception of FECN packets for CCA,
+ * the tidflow entry needs the KeepAfterSequenceError bit set.
+ * A packet that is converted from expected to eager by RSM will not
+ * trigger an update in the tidflow state.  This will cause the tidflow
+ * to incorrectly report a sequence error on any non-FECN packets that
+ * arrive after the RSM intercepted packets.  If the KeepAfterSequenceError
+ * bit is set, PSM can properly detect this "false SeqErr" condition,
+ * and recover without dropping packets.
+ * Note that if CCA/RSM are not important, this change will slightly
+ * increase the CPU load when packets are dropped.  If this is significant,
+ * consider hiding this change behind a CCA/RSM environment variable.
+ */
+
 	ctrl->__hfi_rcvtidflow[flowid] = __cpu_to_le64(
 		((genval & HFI_TF_GENVAL_MASK) << HFI_TF_GENVAL_SHIFT) |
 		((seqnum & HFI_TF_SEQNUM_MASK) << HFI_TF_SEQNUM_SHIFT) |
 		((uint64_t)ctrl->__hfi_tfvalid << HFI_TF_FLOWVALID_SHIFT) |
 		(1ULL << HFI_TF_HDRSUPP_ENABLED_SHIFT) |
-		/* KeepAfterSeqErr = 0 */
+		/* KeepAfterSequenceError = 1 -- previously was 0 */
+		(1ULL << HFI_TF_KEEP_AFTER_SEQERR_SHIFT) |
 		(1ULL << HFI_TF_KEEP_ON_GENERR_SHIFT) |
 		/* KeePayloadOnGenErr = 0 */
 		(1ULL << HFI_TF_STATUS_SEQMISMATCH_SHIFT) |
@@ -776,10 +804,14 @@ static __inline__ void hfi_hdrset_seq(__le32 *rbuf, uint32_t val)
 /* Returns 0 on success, else an errno.  See full description at declaration */
 static __inline__ int32_t hfi_update_tid(struct _hfi_ctrl *ctrl,
 					 uint64_t vaddr, uint32_t *length,
-					 uint64_t tidlist, uint32_t *tidcnt)
+					 uint64_t tidlist, uint32_t *tidcnt, uint16_t flags)
 {
 	struct hfi1_cmd cmd;
+#ifdef PSM_CUDA
+	struct hfi1_tid_info_v2 tidinfo;
+#else
 	struct hfi1_tid_info tidinfo;
+#endif
 	int err;
 
 	tidinfo.vaddr = vaddr;		/* base address for this send to map */
@@ -788,7 +820,16 @@ static __inline__ int32_t hfi_update_tid(struct _hfi_ctrl *ctrl,
 	tidinfo.tidlist = tidlist;	/* driver copies tids back directly */
 	tidinfo.tidcnt = 0;		/* clear to zero */
 
-	cmd.type = HFI1_CMD_TID_UPDATE;
+	cmd.type = PSMI_HFI_CMD_TID_UPDATE;
+#ifdef PSM_CUDA
+	cmd.type = PSMI_HFI_CMD_TID_UPDATE_V2;
+
+	if (PSMI_IS_DRIVER_GPUDIRECT_ENABLED)
+		tidinfo.flags = flags;
+	else
+		tidinfo.flags = 0;
+#endif
+
 	cmd.len = sizeof(tidinfo);
 	cmd.addr = (__u64) &tidinfo;
 
@@ -812,7 +853,7 @@ static __inline__ int32_t hfi_free_tid(struct _hfi_ctrl *ctrl,
 	tidinfo.tidlist = tidlist;	/* input to driver */
 	tidinfo.tidcnt = tidcnt;
 
-	cmd.type = HFI1_CMD_TID_FREE;
+	cmd.type = PSMI_HFI_CMD_TID_FREE;
 	cmd.len = sizeof(tidinfo);
 	cmd.addr = (__u64) &tidinfo;
 
@@ -831,7 +872,7 @@ static __inline__ int32_t hfi_get_invalidation(struct _hfi_ctrl *ctrl,
 	tidinfo.tidlist = tidlist;	/* driver copies tids back directly */
 	tidinfo.tidcnt = 0;		/* clear to zero */
 
-	cmd.type = HFI1_CMD_TID_INVAL_READ;
+	cmd.type = PSMI_HFI_CMD_TID_INVAL_READ;
 	cmd.len = sizeof(tidinfo);
 	cmd.addr = (__u64) &tidinfo;
 

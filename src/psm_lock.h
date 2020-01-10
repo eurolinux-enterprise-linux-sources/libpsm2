@@ -76,7 +76,24 @@ typedef pthread_spinlock_t psmi_spinlock_t;
 typedef ips_atomic_t psmi_spinlock_t;
 #define PSMI_SPIN_LOCKED    1
 #define PSMI_SPIN_UNLOCKED  0
+#endif
 
+/* psmi_lock_t structure */
+typedef struct {
+
+#ifdef PSMI_LOCK_IS_SPINLOCK
+	psmi_spinlock_t lock;
+#elif defined(PSMI_LOCK_IS_MUTEXLOCK_DEBUG)
+	pthread_mutex_t lock;
+	pthread_t lock_owner;
+#elif defined(PSMI_LOCK_IS_MUTEXLOCK)
+	pthread_mutex_t lock;
+#endif
+} psmi_lock_t;
+
+
+#if PSMI_USE_PTHREAD_SPINLOCKS
+#else
 PSMI_ALWAYS_INLINE(int psmi_spin_init(psmi_spinlock_t *lock))
 {
 	ips_atomic_set(lock, PSMI_SPIN_UNLOCKED);
@@ -105,5 +122,69 @@ PSMI_ALWAYS_INLINE(int psmi_spin_unlock(psmi_spinlock_t *lock))
 	return 0;
 }
 #endif /* PSMI_USE_PTHREAD_SPINLOCKS */
+
+PSMI_ALWAYS_INLINE(void psmi_init_lock(psmi_lock_t *lock))
+{
+#ifdef PSMI_LOCK_IS_SPINLOCK
+	psmi_spin_init(&(lock->lock));
+#elif defined(PSMI_LOCK_IS_MUTEXLOCK)
+	pthread_mutex_init(&(lock->lock), NULL);
+#elif defined(PSMI_LOCK_IS_MUTEXLOCK_DEBUG)
+	pthread_mutexattr_t attr;
+	pthread_mutexattr_init(&attr);
+	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK_NP);
+	pthread_mutex_init(&(lock->lock), &attr);
+	pthread_mutexattr_destroy(&attr);
+	lock->lock_owner = PSMI_LOCK_NO_OWNER;
+#endif
+}
+
+PSMI_ALWAYS_INLINE(int psmi_sem_post(sem_t *sem, const char *name))
+{
+	if (sem_post(sem) == -1) {
+		_HFI_VDBG("Semaphore %s: post failed\n", name ? name : "NULL" );
+		return -1;
+	}
+
+	_HFI_VDBG("Semaphore %s: post succeeded\n", name ? name : "NULL");
+
+	return 0;
+}
+
+PSMI_ALWAYS_INLINE(int psmi_sem_timedwait(sem_t *sem, const char *name))
+{
+	/* Wait 5 seconds for shm read-write lock to open */
+	struct timespec ts;
+	clock_gettime(CLOCK_REALTIME, &ts);
+	ts.tv_sec += 5;
+
+	if (sem_timedwait(sem, &ts) == -1) {
+		_HFI_VDBG("Semaphore %s: Timedwait failed\n", name ? name : "NULL" );
+		return -1;
+	}
+
+	_HFI_VDBG("Semaphore %s: Timedwait succeeded\n", name ? name : "NULL");
+
+	return 0;
+}
+
+PSMI_ALWAYS_INLINE(int psmi_init_semaphore(sem_t **sem, const char *name,
+					   mode_t mode, int value))
+{
+	*sem = sem_open(name, O_CREAT | O_EXCL, mode, value);
+	if ((*sem == SEM_FAILED) && (errno == EEXIST)) {
+		*sem = sem_open(name, O_CREAT, mode, value);
+		if (*sem == SEM_FAILED) {
+			_HFI_VDBG("Cannot open semaphore %s, errno=%d\n",
+				  name, errno);
+			return -1;
+		}
+	} else if (*sem == SEM_FAILED) {
+		_HFI_VDBG("Cannot create semaphore %s, errno=%d\n", name, errno);
+		return -1;
+	}
+
+	return 0;
+}
 
 #endif /* _PSMI_LOCK_H */

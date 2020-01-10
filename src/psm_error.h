@@ -52,6 +52,7 @@
 */
 
 /* Copyright (c) 2003-2014 Intel Corporation. All rights reserved. */
+#include "psm2_mock_testing.h"
 
 #ifndef _PSMI_IN_USER_H
 #error psm_error.h not meant to be included directly, include psm_user.h instead
@@ -66,9 +67,10 @@
 
 psm2_ep_errhandler_t psmi_errhandler_global;
 
-psm2_error_t psmi_handle_error(psm2_ep_t ep, psm2_error_t error,
+psm2_error_t MOCKABLE(psmi_handle_error)(psm2_ep_t ep, psm2_error_t error,
 			      const char *buf, ...)
 			      __attribute__((format(printf, 3, 4)));
+MOCK_DCL_EPILOGUE(psmi_handle_error);
 
 psm2_error_t psmi_error_cmp(psm2_error_t errA, psm2_error_t errB);
 int psmi_error_syslog_level(psm2_error_t error);

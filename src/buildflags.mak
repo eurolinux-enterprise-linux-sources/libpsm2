@@ -4,7 +4,7 @@
 #
 #  GPL LICENSE SUMMARY
 #
-#  Copyright(c) 2015 Intel Corporation.
+#  Copyright(c) 2016 Intel Corporation.
 #
 #  This program is free software; you can redistribute it and/or modify
 #  it under the terms of version 2 of the GNU General Public License as
@@ -20,7 +20,7 @@
 #
 #  BSD LICENSE
 #
-#  Copyright(c) 2015 Intel Corporation.
+#  Copyright(c) 2016 Intel Corporation.
 #
 #  Redistribution and use in source and binary forms, with or without
 #  modification, are permitted provided that the following conditions
@@ -48,7 +48,7 @@
 #  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 #  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
-#  Copyright (c) 2003-2015 Intel Corporation. All rights reserved.
+#  Copyright (c) 2003-2016 Intel Corporation. All rights reserved.
 #
 
 # set top_srcdir and include this file
@@ -58,7 +58,7 @@ $(error top_srcdir must be set to include makefile fragment)
 endif
 
 export os ?= $(shell uname -s | tr '[A-Z]' '[a-z]')
-export arch := $(shell uname -p | sed -e 's,\(i[456]86\|athlon$$\),i386,')
+export arch := $(shell uname -m | sed -e 's,\(i[456]86\|athlon$$\),i386,')
 
 ifeq (${CCARCH},gcc)
 	export CC := gcc
@@ -80,57 +80,62 @@ else
 	anerr := $(error Unknown Fortran compiler arch: ${FCARCH})
 endif # gfortran
 
-BASECFLAGS += $(BASE_FLAGS)
+BASECFLAGS += $(BASE_FLAGS) -pthread
 LDFLAGS += $(BASE_FLAGS)
 ASFLAGS += $(BASE_FLAGS)
 
 ifeq ($(PSM2_MOCK_TESTING),1)
 BASECFLAGS += -DPSM2_MOCK_TESTING=1
-# we skip the linker script for testing version, we want all symbols to be
-# reachable from outside the library
+unexport LINKER_SCRIPT
+# We skip the linker script for mock testing version, we want all symbols
+# to be reachable from outside the library
 else
-LDFLAGS += -Wl,--version-script psm2_linker_script.map
+LINKER_SCRIPT := -Wl,--version-script $(LINKER_SCRIPT_FILE)
 endif
 
 WERROR := -Werror
 INCLUDES := -I. -I$(top_srcdir)/include -I$(top_srcdir)/mpspawn -I$(top_srcdir)/include/$(os)-$(arch)
 
+#
+# use IFS provided hfi1_user.h if installed.
+#
+IFS_HFI_HEADER_PATH := /usr/include/uapi
+INCLUDES += -I${IFS_HFI_HEADER_PATH}
+
 BASECFLAGS +=-Wall $(WERROR)
-
-#
-# test if compiler supports 16B(SSE2)/32B(AVX2)/64B(AVX512F) move instruction.
-#
-RET := $(shell echo "int main() {}" | $${CC} -msse2 -E -xc - > /dev/null 2>&1; echo $$?)
-ifneq (1,${RET})
-  BASECFLAGS += -msse2
-endif
-
-ifneq (,${PSM_AVX})
-ifeq (${CC},icc)
-  MAVX2=-march=core-avx2
-else
-  MAVX2=-mavx2
-endif
-RET := $(shell echo "int main() {}" | $${CC} ${MAVX2} -E -xc - > /dev/null 2>&1; echo $$?)
-ifneq (1,${RET})
-  BASECFLAGS += ${MAVX2}
-endif
-ifneq (icc,${CC})
-  RET := $(shell echo "int main() {}" | $${CC} -mavx512f -E -xc - > /dev/null 2>&1; echo $$?)
-  ifneq (1,${RET})
-    BASECFLAGS += -mavx512f
-  endif
-endif
-endif
 
 #
 # test if compiler supports SSE4.2 (needed for crc32 instruction)
 #
-RET := $(shell echo "int main() {}" | $${CC} -msse4.2 -E -xc - > /dev/null 2>&1; echo $$?)
-ifneq (1,${RET})
+RET := $(shell echo "int main() {}" | ${CC} -msse4.2 -E -dM -xc - 2>&1 | grep -q SSE4_2 ; echo $$?)
+ifeq (0,${RET})
   BASECFLAGS += -msse4.2
 else
   $(error SSE4.2 compiler support required )
+endif
+
+#
+# test if compiler supports 32B(AVX2)/64B(AVX512F) move instruction.
+#
+ifneq (,${PSM_AVX})
+  ifeq (${CC},icc)
+    MAVX2=-march=core-avx2
+  else
+    MAVX2=-mavx2
+  endif
+  RET := $(shell echo "int main() {}" | ${CC} ${MAVX2} -E -dM -xc - 2>&1 | grep -q AVX2 ; echo $$?)
+  ifeq (0,${RET})
+    TMPVAR := $(BASECFLAGS)
+    BASECFLAGS := $(filter-out -msse4.2,$(TMPVAR))
+    BASECFLAGS += ${MAVX2}
+  endif
+
+  ifneq (icc,${CC})
+    RET := $(shell echo "int main() {}" | ${CC} -mavx512f -E -dM -xc - 2>&1 | grep -q AVX512 ; echo $$?)
+    ifeq (0,${RET})
+      BASECFLAGS += -mavx512f
+    endif
+  endif
 endif
 
 #
@@ -138,6 +143,9 @@ endif
 #
 BASECFLAGS += -D_DEFAULT_SOURCE -D_SVID_SOURCE -D_BSD_SOURCE
 
+ifneq (,${HFI_BRAKE_DEBUG})
+  BASECFLAGS += -DHFI_BRAKE_DEBUG
+endif
 ifneq (,${PSM_DEBUG})
   BASECFLAGS += -O -g3 -DPSM_DEBUG -D_HFI_DEBUGGING -funit-at-a-time -Wp,-D_FORTIFY_SOURCE=2
 else
@@ -148,7 +156,14 @@ ifneq (,${PSM_COVERAGE}) # This check must come after PSM_DEBUG to override opti
   LDFLAGS += -fprofile-arcs
 endif
 ifneq (,${PSM_LOG})
-   BASECFLAGS += -DPSM_LOG
+   BASECFLAGS += -DPSM2_LOG
+ifneq (,${PSM_LOG_FAST_IO})
+   BASECFLAGS += -DPSM2_LOG_FAST_IO
+   PSM2_ADDITIONAL_GLOBALS += psmi_log_fini;psmi_log_message;
+endif
+endif
+ifneq (,${PSM_PERF})
+   BASECFLAGS += -DRDPMC_PERF_FRAMEWORK
 endif
 ifneq (,${PSM_HEAP_DEBUG})
    BASECFLAGS += -DPSM_HEAP_DEBUG
@@ -156,19 +171,18 @@ endif
 ifneq (,${PSM_PROFILE})
   BASECFLAGS += -DPSM_PROFILE
 endif
+ifneq (,${PSM_CUDA})
+  BASECFLAGS += -DNVIDIA_GPU_DIRECT -DPSM_CUDA
+  CUDA_HOME ?= /usr/local/cuda
+  INCLUDES += -I$(CUDA_HOME)/include
+endif
 
 BASECFLAGS += -fpic -fPIC -D_GNU_SOURCE
 
-ifeq ($CC,gcc)
-  BASECFLAGS += -funwind-tables
-endif
-
-EXTRA_LIBS = -luuid
-
 ifneq (,${PSM_VALGRIND})
-  CFLAGS += -DPSM_VALGRIND
+  BASECFLAGS += -DPSM_VALGRIND
 else
-  CFLAGS += -DNVALGRIND
+  BASECFLAGS += -DNVALGRIND
 endif
 
 ASFLAGS += -g3 -fpic
@@ -176,18 +190,25 @@ ASFLAGS += -g3 -fpic
 BASECFLAGS += ${OPA_CFLAGS}
 
 ifeq (${CCARCH},icc)
-    BASECFLAGS += -O3 -g3 -fpic -fPIC -D_GNU_SOURCE -DPACK_STRUCT_STL=packed,
-    CFLAGS += $(BASECFLAGS)
+    BASECFLAGS += -fpic -fPIC -D_GNU_SOURCE -DPACK_STRUCT_STL=packed,
     LDFLAGS += -static-intel
 else
 	ifeq (${CCARCH},gcc)
-	    CFLAGS += $(BASECFLAGS) -Wno-strict-aliasing 
+	    BASECFLAGS += -funwind-tables -Wno-strict-aliasing -Wformat-security
 	else
-	    ifeq (${CCARCH},gcc4)
-		CFLAGS += $(BASECFLAGS)
-	    else
+	    ifneq (${CCARCH},gcc4)
 		$(error Unknown compiler arch "${CCARCH}")
 	    endif # gcc4
 	endif # gcc
 endif # icc
+
+# We run export here to ensure all the above setup is in the environment
+# for sub makes. However, we exclude this during clean and distclean
+# to avoid resolution of some variables that don't need to be resolved
+# and avoid unnecessary missing file warnings during cleanup.
+ifneq ($(MAKECMDGOALS), clean)
+ifneq ($(MAKECMDGOALS), distclean)
+export
+endif
+endif
 

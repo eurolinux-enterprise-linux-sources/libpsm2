@@ -56,6 +56,7 @@
 #include "psm_user.h"
 #include "psm2_am.h"
 #include "psm_am_internal.h"
+#include "psm_mq_internal.h"
 
 int psmi_ep_device_is_enabled(const psm2_ep_t ep, int devid);
 
@@ -89,7 +90,7 @@ static void psmi_am_min_parameters(struct psm2_am_parameters *dest,
 psm2_error_t psmi_am_init_internal(psm2_ep_t ep)
 {
 	int i;
-	psm2_am_handler_fn_t *am_htable;
+	struct psm2_ep_am_handle_entry *am_htable;
 	struct psm2_am_parameters params;
 
 	psmi_am_parameters.max_handlers = INT_MAX;
@@ -114,15 +115,19 @@ psm2_error_t psmi_am_init_internal(psm2_ep_t ep)
 
 	ep->am_htable =
 	    psmi_malloc(ep, UNDEFINED,
-			sizeof(psm2_am_handler_fn_t) * PSMI_AM_NUM_HANDLERS);
+			sizeof(struct psm2_ep_am_handle_entry) * PSMI_AM_NUM_HANDLERS);
 	if (ep->am_htable == NULL)
 		return PSM2_NO_MEMORY;
 
-	am_htable = (psm2_am_handler_fn_t *) ep->am_htable;
-	for (i = 0; i < PSMI_AM_NUM_HANDLERS; i++)
-		am_htable[i] = _ignore_handler;
+	am_htable = (struct psm2_ep_am_handle_entry *) ep->am_htable;
+	for (i = 0; i < PSMI_AM_NUM_HANDLERS; i++) {
+		am_htable[i].hfn = _ignore_handler;
+		am_htable[i].hctx = NULL;
+		am_htable[i].version = PSM2_AM_HANDLER_V2;
+	}
 
 	return PSM2_OK;
+
 }
 
 psm2_error_t
@@ -132,11 +137,15 @@ __psm2_am_register_handlers(psm2_ep_t ep,
 {
 	int i, j;
 
+	psmi_assert_always(ep->am_htable != NULL);
+
 	PSM2_LOG_MSG("entering");
 	/* For now just assign any free one */
-	for (i = 0, j = 0; i < PSMI_AM_NUM_HANDLERS; i++) {
-		if (ep->am_htable[i] == _ignore_handler) {
-			ep->am_htable[i] = handlers[j];
+	for (i = 0, j = 0; (i < PSMI_AM_NUM_HANDLERS) && (j < num_handlers); i++) {
+		if (ep->am_htable[i].hfn == _ignore_handler) {
+			ep->am_htable[i].hfn = handlers[j];
+			ep->am_htable[i].hctx = NULL;
+			ep->am_htable[i].version = PSM2_AM_HANDLER_V1;
 			handlers_idx[j] = i;
 			if (++j == num_handlers)	/* all registered */
 				break;
@@ -145,8 +154,11 @@ __psm2_am_register_handlers(psm2_ep_t ep,
 
 	if (j < num_handlers) {
 		/* Not enough free handlers, restore unused handlers */
-		for (i = 0; i < j; i++)
-			ep->am_htable[handlers_idx[i]] = _ignore_handler;
+		for (i = 0; i < j; i++) {
+			ep->am_htable[handlers_idx[i]].hfn = _ignore_handler;
+			ep->am_htable[handlers_idx[i]].hctx = NULL;
+			ep->am_htable[handlers_idx[i]].version = PSM2_AM_HANDLER_V2;
+		}
 		PSM2_LOG_MSG("leaving");
 		return psmi_handle_error(ep, PSM2_EP_NO_RESOURCES,
 					 "Insufficient "
@@ -159,6 +171,48 @@ __psm2_am_register_handlers(psm2_ep_t ep,
 	}
 }
 PSMI_API_DECL(psm2_am_register_handlers)
+
+psm2_error_t
+__psm2_am_register_handlers_2(psm2_ep_t ep,
+			   const psm2_am_handler_2_fn_t *handlers,
+			   int num_handlers, void **hctx, int *handlers_idx)
+{
+	int i, j;
+
+	psmi_assert_always(ep->am_htable != NULL);
+
+	PSM2_LOG_MSG("entering");
+	/* For now just assign any free one */
+	for (i = 0, j = 0; (i < PSMI_AM_NUM_HANDLERS) && (j < num_handlers); i++) {
+		if (ep->am_htable[i].hfn == _ignore_handler) {
+			ep->am_htable[i].hfn = handlers[j];
+			ep->am_htable[i].hctx = hctx[j];
+			ep->am_htable[i].version = PSM2_AM_HANDLER_V2;
+			handlers_idx[j] = i;
+			if (++j == num_handlers)	/* all registered */
+				break;
+		}
+	}
+
+	if (j < num_handlers) {
+		/* Not enough free handlers, restore unused handlers */
+		for (i = 0; i < j; i++) {
+			ep->am_htable[handlers_idx[i]].hfn = _ignore_handler;
+			ep->am_htable[handlers_idx[i]].hctx = NULL;
+			ep->am_htable[handlers_idx[i]].version = PSM2_AM_HANDLER_V2;
+		}
+		PSM2_LOG_MSG("leaving");
+		return psmi_handle_error(ep, PSM2_EP_NO_RESOURCES,
+					 "Insufficient "
+					 "available AM handlers: registered %d of %d requested handlers",
+					 j, num_handlers);
+	}
+	else {
+		PSM2_LOG_MSG("leaving");
+		return PSM2_OK;
+	}
+}
+PSMI_API_DECL(psm2_am_register_handlers_2)
 
 psm2_error_t
 __psm2_am_request_short(psm2_epaddr_t epaddr, psm2_handler_t handler,
@@ -178,12 +232,12 @@ __psm2_am_request_short(psm2_epaddr_t epaddr, psm2_handler_t handler,
 	psmi_assert(len >= 0 && len <= psmi_am_parameters.max_request_short);
 	psmi_assert(len > 0 ? src != NULL : 1);
 
-	PSMI_PLOCK();
+	PSMI_LOCK(ptlc->ep->mq->progress_lock);
 
 	err = ptlc->am_short_request(epaddr, handler, args,
 				     nargs, src, len, flags, completion_fn,
 				     completion_ctxt);
-	PSMI_PUNLOCK();
+	PSMI_UNLOCK(ptlc->ep->mq->progress_lock);
 	PSM2_LOG_MSG("leaving");
 
 	return err;

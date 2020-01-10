@@ -51,9 +51,8 @@
 
 */
 
-/* Copyright (c) 2003-2015 Intel Corporation. All rights reserved. */
-
 #include <netdb.h>		/* gethostbyname */
+#include <malloc.h>             /* malloc_usable_size */
 #include "psm_user.h"
 #include "psm_mq_internal.h"
 #include "psm_am_internal.h"
@@ -402,24 +401,29 @@ static int psmi_getenv_is_verblevel(int printlevel)
 	return (printlevel <= psmi_getenv_verblevel);
 }
 
-#define GETENV_PRINTF(_level, _fmt, ...)			\
-	do {							\
-		int nlevel = _level;				\
-		if (psmi_getenv_is_verblevel(nlevel))		\
-		nlevel = 0;					\
-		_HFI_ENVDBG(nlevel, _fmt, ##__VA_ARGS__);	\
+#define GETENV_PRINTF(_level, _fmt, ...)				\
+	do {								\
+		if ((_level & PSMI_ENVVAR_LEVEL_NEVER_PRINT) == 0)	\
+		{							\
+			int nlevel = _level;				\
+			if (psmi_getenv_is_verblevel(nlevel))		\
+				nlevel = 0;				\
+			_HFI_ENVDBG(nlevel, _fmt, ##__VA_ARGS__);	\
+		}							\
 	} while (0)
 
 int
-psmi_getenv(const char *name, const char *descr, int level,
+MOCKABLE(psmi_getenv)(const char *name, const char *descr, int level,
 	    int type, union psmi_envvar_val defval,
 	    union psmi_envvar_val *newval)
 {
 	int used_default = 0;
 	union psmi_envvar_val tval;
 	char *env = getenv(name);
+#if _HFI_DEBUGGING
 	int ishex = (type == PSMI_ENVVAR_TYPE_ULONG_FLAGS ||
 		     type == PSMI_ENVVAR_TYPE_UINT_FLAGS);
+#endif
 
 	/* If we're not using the default, always reset the print
 	 * level to '1' so the changed value gets seen at low
@@ -436,6 +440,23 @@ psmi_getenv(const char *name, const char *descr, int level,
 				level > 1 ? "*" : " ", name, descr,	\
 				ishex ? " 0x" : " ", val,		\
 				ishex ? " 0x" : " ", defval);		\
+	} while (0)
+
+/* _CONSUMED_ALL() is a macro which indicates if strtol() consumed all
+   of the input passed to it. */
+#define _CONSUMED_ALL(CHAR_PTR) (((CHAR_PTR) != NULL) && (*(CHAR_PTR) == 0))
+#define _CONVERT_TO_NUM(DEST,TYPE,STRTOL)						\
+	do {										\
+		char *ep;								\
+		/* Avoid base 8 (octal) on purpose, so don't pass in 0 for radix */	\
+		DEST = (TYPE)STRTOL(env, &ep, 10);					\
+		if (! _CONSUMED_ALL(ep)) {						\
+			DEST = (TYPE)STRTOL(env, &ep, 16);				\
+			if (! _CONSUMED_ALL(ep)) {					\
+				used_default = 1;					\
+				tval = defval;						\
+			}								\
+		}									\
 	} while (0)
 
 	switch (type) {
@@ -474,12 +495,7 @@ psmi_getenv(const char *name, const char *descr, int level,
 			tval = defval;
 			used_default = 1;
 		} else {
-			char *ep;
-			tval.e_int = (int)strtol(env, &ep, 0);
-			if (ep == env) {
-				used_default = 1;
-				tval = defval;
-			}
+			_CONVERT_TO_NUM(tval.e_int,int,strtol);
 		}
 		_GETENV_PRINT(used_default, "%d", tval.e_int, defval.e_int);
 		break;
@@ -490,12 +506,7 @@ psmi_getenv(const char *name, const char *descr, int level,
 			tval = defval;
 			used_default = 1;
 		} else {
-			char *ep;
-			tval.e_int = (unsigned int)strtoul(env, &ep, 0);
-			if (ep == env) {
-				used_default = 1;
-				tval = defval;
-			}
+			_CONVERT_TO_NUM(tval.e_int,unsigned int,strtoul);
 		}
 		if (type == PSMI_ENVVAR_TYPE_UINT_FLAGS)
 			_GETENV_PRINT(used_default, "%x", tval.e_uint,
@@ -510,12 +521,7 @@ psmi_getenv(const char *name, const char *descr, int level,
 			tval = defval;
 			used_default = 1;
 		} else {
-			char *ep;
-			tval.e_long = strtol(env, &ep, 0);
-			if (ep == env) {
-				used_default = 1;
-				tval = defval;
-			}
+			_CONVERT_TO_NUM(tval.e_long,long,strtol);
 		}
 		_GETENV_PRINT(used_default, "%ld", tval.e_long, defval.e_long);
 		break;
@@ -524,13 +530,7 @@ psmi_getenv(const char *name, const char *descr, int level,
 			tval = defval;
 			used_default = 1;
 		} else {
-			char *ep;
-			tval.e_ulonglong =
-			    (unsigned long long)strtoull(env, &ep, 0);
-			if (ep == env) {
-				used_default = 1;
-				tval = defval;
-			}
+			_CONVERT_TO_NUM(tval.e_ulonglong,unsigned long long,strtoull);
 		}
 		_GETENV_PRINT(used_default, "%llu",
 			      tval.e_ulonglong, defval.e_ulonglong);
@@ -542,12 +542,7 @@ psmi_getenv(const char *name, const char *descr, int level,
 			tval = defval;
 			used_default = 1;
 		} else {
-			char *ep;
-			tval.e_ulong = (unsigned long)strtoul(env, &ep, 0);
-			if (ep == env) {
-				used_default = 1;
-				tval = defval;
-			}
+			_CONVERT_TO_NUM(tval.e_ulong,unsigned long,strtoul);
 		}
 		if (type == PSMI_ENVVAR_TYPE_ULONG_FLAGS)
 			_GETENV_PRINT(used_default, "%lx", tval.e_ulong,
@@ -562,6 +557,7 @@ psmi_getenv(const char *name, const char *descr, int level,
 
 	return used_default;
 }
+MOCK_DEF_EPILOGUE(psmi_getenv);
 
 /*
  * Parsing int parameters set in string tuples.
@@ -797,7 +793,7 @@ uint32_t psmi_crc(unsigned char *buf, int len)
 }
 
 /* Return the HFI type being used for a context */
-uint32_t psmi_get_hfi_type(psmi_context_t *context)
+uint32_t psmi_get_hfi_type(const psmi_context_t *context)
 {
 	return PSMI_HFI_TYPE_OPA1;
 }
@@ -815,6 +811,18 @@ struct psmi_faultinj_spec {
 	int denom;
 
 };
+
+int psmi_multi_ep_enabled = 0;
+void psmi_multi_ep_init()
+{
+	union psmi_envvar_val env_fi;
+
+	psmi_getenv("PSM2_MULTI_EP", "PSM2 Multiple Endpoints (yes/no)",
+		    PSMI_ENVVAR_LEVEL_USER, PSMI_ENVVAR_TYPE_YESNO,
+		    PSMI_ENVVAR_VAL_NO, &env_fi);
+
+	psmi_multi_ep_enabled = env_fi.e_uint;
+}
 
 int psmi_faultinj_enabled = 0;
 int psmi_faultinj_verbose = 0;
@@ -869,7 +877,7 @@ void psmi_faultinj_fini()
 			++c;
 		}
 		do_fclose = 1;
-		snprintf(buf, sizeof(buf) - 1, "%s.%s", c, __hfi_mylabel);
+		snprintf(buf, sizeof(buf) - 1, "%s.%s", c, hfi_get_mylabel());
 		buf[sizeof(buf) - 1] = '\0';
 		fp = fopen(buf, append ? "a" : "w");
 	}
@@ -878,7 +886,7 @@ void psmi_faultinj_fini()
 		STAILQ_FOREACH(fi, &psmi_faultinj_head, next) {
 			fprintf(fp, "%s:%s PSM2_FI_%-12s %2.3f%% => "
 				"%2.3f%% %10lld faults/%10lld events\n",
-				__progname, __hfi_mylabel, fi->spec_name,
+				__progname, hfi_get_mylabel(), fi->spec_name,
 				(double)fi->num * 100.0 / fi->denom,
 				(double)fi->num_faults * 100.0 / fi->num_calls,
 				fi->num_faults, fi->num_calls);
@@ -911,6 +919,7 @@ struct psmi_faultinj_spec *psmi_faultinj_getspec(char *spec_name, int num,
 	/* We got here, so no spec -- allocate one */
 	fi = psmi_malloc(PSMI_EP_NONE, UNDEFINED,
 			 sizeof(struct psmi_faultinj_spec));
+	psmi_assert_always(fi != NULL);
 	strncpy(fi->spec_name, spec_name, PSMI_FAULTINJ_SPEC_NAMELEN - 1);
 	fi->spec_name[PSMI_FAULTINJ_SPEC_NAMELEN - 1] = '\0';
 	fi->num = num;
@@ -995,6 +1004,7 @@ struct psmi_memtype_hdr {
 		uint64_t magic:8;
 		uint64_t type:8;
 	};
+	void *original_allocation;
 };
 
 struct psmi_stats_malloc psmi_stats_memory;
@@ -1038,11 +1048,6 @@ void psmi_log_memstats(psmi_memtype_t type, int64_t nbytes)
 }
 
 // Memory stats will only be collected under debug builds
-// Memory stats at O3 optimization will cause memory problems
-// because the 8B header to memory will throw off alignment assumptions
-//
-// This can be re-enabled with padding to prevent alignment issues
-// if it is determined that the stats are needed
 
 #ifdef PSM_DEBUG
 #define psmi_stats_mask PSMI_STATSTYPE_MEMORY
@@ -1138,7 +1143,7 @@ static const HD_Hdr_Magic_Type  HD_HDR_MGC_1 = "Eric";
 static const HD_Hdr_Magic_Type  HD_HDR_MGC_2 = "Emily";
 static const HD_Trlr_Magic_Type HD_TRLR_MGC  = "Erin&Elaine";
 
-/* Convert a pointer of an acual allocation to a pointer to its HD header: */
+/* Convert a pointer of an actual allocation to a pointer to its HD header: */
 static inline HD_Header_Type *HD_AA_TO_HD_HDR(void *aa)
 {
 	char *p = (char*)aa;
@@ -1357,21 +1362,31 @@ static inline void hd_free(void *ptr,const char *curloc)
 	psmi_assert_always(0);
 }
 
+size_t hd_malloc_usable_size(void *ptr,const char *curloc)
+{
+	HD_Header_Type *hd_alloc = HD_AA_TO_HD_HDR(ptr);
+	return hd_alloc->systemAllocSize;
+}
+
 #endif
 
 #ifdef PSM_HEAP_DEBUG
+
 /* For HD code, we retarget the malloc, memaligh and free calls to the hd versions
  * of the code. */
-#define my_malloc(SZ,CURLOC)             hd_malloc(SZ,CURLOC)
-#define my_memalign(PTR,ALIGN,SZ,CURLOC) hd_memalign(PTR,ALIGN,SZ,CURLOC)
-#define my_free(PTR,CURLOC)              hd_free(PTR,CURLOC)
+
+#define my_malloc(SZ,CURLOC)              hd_malloc(SZ,CURLOC)
+#define my_memalign(PTR,ALIGN,SZ,CURLOC)  hd_memalign(PTR,ALIGN,SZ,CURLOC)
+#define my_free(PTR,CURLOC)               hd_free(PTR,CURLOC)
+#define my_malloc_usable_size(PTR,CURLOC) hd_malloc_usable_size(PTR,CURLOC)
 
 #else
 
 /* For non-HD code, we target the code to the usual functions: */
-#define my_malloc(SZ,CURLOC)             malloc(SZ)
-#define my_memalign(PTR,ALIGN,SZ,CURLOC) posix_memalign(PTR,ALIGN,SZ)
-#define my_free(PTR,CURLOC)              free(PTR)
+#define my_malloc(SZ,CURLOC)              malloc(SZ)
+#define my_memalign(PTR,ALIGN,SZ,CURLOC)  posix_memalign(PTR,ALIGN,SZ)
+#define my_free(PTR,CURLOC)               free(PTR)
+#define my_malloc_usable_size(PTR,CURLOC) malloc_usable_size(PTR)
 
 #endif
 
@@ -1380,8 +1395,6 @@ void *psmi_malloc_internal(psm2_ep_t ep, psmi_memtype_t type,
 {
 	size_t newsz = sz;
 	void *newa;
-
-	psmi_assert(sizeof(struct psmi_memtype_hdr) == 8);
 
 	if_pf(psmi_stats_mask & PSMI_STATSTYPE_MEMORY)
 	    newsz += sizeof(struct psmi_memtype_hdr);
@@ -1398,11 +1411,35 @@ void *psmi_malloc_internal(psm2_ep_t ep, psmi_memtype_t type,
 		hdr->size = newsz;
 		hdr->type = type;
 		hdr->magic = 0x8c;
+		hdr->original_allocation = newa;
 		psmi_log_memstats(type, newsz);
 		newa = (void *)(hdr + 1);
 		/* _HFI_INFO("alloc is %p\n", newa); */
 	}
 	return newa;
+}
+
+void *psmi_realloc_internal(psm2_ep_t ep, psmi_memtype_t type,
+			    void *ptr, size_t nsz, const char *curloc)
+{
+	if (ptr)
+	{
+		size_t existingSize = psmi_malloc_usable_size_internal(ptr,curloc);
+		if (nsz > existingSize)
+		{
+			void *newPtr = psmi_malloc_internal(ep,type,nsz,curloc);
+
+			memcpy(newPtr,ptr,existingSize);
+			psmi_free_internal(ptr,curloc);
+			return newPtr;
+		}
+		else
+			/* We will not support shrinking virtual space
+			   for performance reasons. */
+			return ptr;
+	}
+	else
+		return psmi_malloc_internal(ep,type,nsz,curloc);
 }
 
 #ifdef memalign
@@ -1413,12 +1450,22 @@ void *psmi_memalign_internal(psm2_ep_t ep, psmi_memtype_t type,
 {
 	size_t newsz = sz;
 	void *newa;
-	int ret;
-
-	psmi_assert(sizeof(struct psmi_memtype_hdr) == 8);
+	int ret, preambleSize = 0;
 
 	if_pf(psmi_stats_mask & PSMI_STATSTYPE_MEMORY)
-		newsz += sizeof(struct psmi_memtype_hdr);
+	{
+		if (sizeof(struct psmi_memtype_hdr) > alignment)
+		{
+			int n = sizeof(struct psmi_memtype_hdr) / alignment;
+			int r = sizeof(struct psmi_memtype_hdr) % alignment;
+			if (r)
+				n++;
+			preambleSize = n * alignment;
+		}
+		else
+			preambleSize = alignment;
+		newsz += preambleSize;
+	}
 
 	ret = my_memalign(&newa, alignment, newsz, curloc);
 	if (ret) {
@@ -1428,12 +1475,14 @@ void *psmi_memalign_internal(psm2_ep_t ep, psmi_memtype_t type,
 	}
 
 	if_pf(psmi_stats_mask & PSMI_STATSTYPE_MEMORY) {
-		struct psmi_memtype_hdr *hdr = (struct psmi_memtype_hdr *)newa;
+		void *rv = newa + preambleSize;
+		struct psmi_memtype_hdr *hdr = (struct psmi_memtype_hdr *)(rv-sizeof(struct psmi_memtype_hdr));
 		hdr->size = newsz;
 		hdr->type = type;
 		hdr->magic = 0x8c;
+		hdr->original_allocation = newa;
 		psmi_log_memstats(type, newsz);
-		newa = (void *)(hdr + 1);
+		newa = rv;
 		/* _HFI_INFO("alloc is %p\n", newa); */
 	}
 	return newa;
@@ -1471,7 +1520,7 @@ void *psmi_strdup_internal(psm2_ep_t ep, const char *string, const char *curloc)
 #undef free
 #endif
 
-void psmi_free_internal(void *ptr,const char *curloc)
+void MOCKABLE(psmi_free_internal)(void *ptr,const char *curloc)
 {
 	if_pf(psmi_stats_mask & PSMI_STATSTYPE_MEMORY) {
 		struct psmi_memtype_hdr *hdr =
@@ -1482,9 +1531,19 @@ void psmi_free_internal(void *ptr,const char *curloc)
 		int magic = (int)hdr->magic;
 		psmi_log_memstats(type, -size);
 		psmi_assert_always(magic == 0x8c);
-		ptr = (void *)hdr;
+		ptr = hdr->original_allocation;
 	}
 	my_free(ptr,curloc);
+}
+MOCK_DEF_EPILOGUE(psmi_free_internal);
+
+#ifdef malloc_usable_size
+#undef malloc_usable_size
+#endif
+
+size_t psmi_malloc_usable_size_internal(void *ptr, const char *curLoc)
+{
+	return my_malloc_usable_size(ptr,curLoc);
 }
 
 PSMI_ALWAYS_INLINE(
@@ -1493,15 +1552,16 @@ psmi_coreopt_ctl(const void *core_obj, int optname,
 		 void *optval, uint64_t *optlen, int get))
 {
 	psm2_error_t err = PSM2_OK;
-	char err_string[256];
 
 	switch (optname) {
 	case PSM2_CORE_OPT_DEBUG:
 		/* Sanity check length */
 		if (*optlen < sizeof(unsigned)) {
-			snprintf(err_string, 256, "Option value length error");
+			err =  psmi_handle_error(NULL,
+					PSM2_PARAM_ERR,
+					"Option value length error");
 			*optlen = sizeof(unsigned);
-			goto fail;
+			return err;
 		}
 
 		if (get) {
@@ -1516,17 +1576,18 @@ psmi_coreopt_ctl(const void *core_obj, int optname,
 
 			/* Sanity check epaddr */
 			if (!epaddr) {
-				snprintf(err_string, 256,
-					 "Invalid endpoint address");
-				goto fail;
+				return psmi_handle_error(NULL,
+						PSM2_PARAM_ERR,
+						"Invalid endpoint address");
 			}
 
 			/* Sanity check length */
 			if (*optlen < sizeof(unsigned long)) {
-				snprintf(err_string, 256,
-					 "Option value length error");
+				err =  psmi_handle_error(NULL,
+						PSM2_PARAM_ERR,
+						"Option value length error");
 				*optlen = sizeof(void *);
-				goto fail;
+				return err;
 			}
 
 			if (get) {
@@ -1538,16 +1599,13 @@ psmi_coreopt_ctl(const void *core_obj, int optname,
 		break;
 	default:
 		/* Unknown/unrecognized option */
-		snprintf(err_string, 256, "Unknown PSM2_CORE option %u.",
-			 optname);
-		goto fail;
+		err = psmi_handle_error(NULL,
+				PSM2_PARAM_ERR,
+				"Unknown PSM2_CORE option %u.",
+				optname);
+		break;
 	}
-
 	return err;
-
-fail:
-	/* Unrecognized/unknown option */
-	return psmi_handle_error(NULL, PSM2_PARAM_ERR, err_string);
 }
 
 psm2_error_t psmi_core_setopt(const void *core_obj, int optname,
@@ -1618,7 +1676,7 @@ psm2_error_t psmi_am_getopt(const void *am_obj, int optname,
 	return psmi_amopt_ctl(am_obj, optname, optval, optlen, 1);
 }
 
-#ifdef PSM_LOG
+#ifdef PSM2_LOG
 
 #include <execinfo.h>
 #include <stdio.h>
@@ -1628,7 +1686,7 @@ psm2_error_t psmi_am_getopt(const void *am_obj, int optname,
 #include "ptl_ips/ips_proto_header.h"
 
 /* A treeNode is used to store the list of Function Name Lists that
-   are passed to the PSM_LOG facility via environment variables.
+   are passed to the PSM2_LOG facility via environment variables.
    See psm_log.h for more information.
 
    Note that treeNode is a node in a binary tree data structure. */
@@ -1690,7 +1748,7 @@ static int joinOverlap(int *line1,int *line2,int line)
    [19 30] [19 30] 2
    [19 20] [19 30] 2
    [10 15] [20 30] 0
-   [40 50] [20 30] 0 */ 
+   [40 50] [20 30] 0 */
 static int joinOverlapRange(int *line1,int *line2,int l1,int l2)
 {
 	return joinOverlap(line1,line2,l1) + joinOverlap(line1,line2,l2);
@@ -1728,8 +1786,8 @@ static void insertNodeInTree(treeNode **root,const char *name,int line1,int line
 	}
 }
 
-/* Returns -1 if the data in the node is less    than the data supplied as parameter, else 
-   Returns  1 if the data in the node is greater than the data supplied as parameter, else 
+/* Returns -1 if the data in the node is less    than the data supplied as parameter, else
+   Returns  1 if the data in the node is greater than the data supplied as parameter, else
    Returns  0.
    */
 static int compareEpmNode(epmTreeNode *node,int opcode,int txrx,uint64_t fromepid,uint64_t toepid)
@@ -1808,7 +1866,7 @@ static void parseString(char *ps,char c,parserFunc pf,void *ctx)
 	for (idx=0;ps[idx];idx++)
 		if (ps[idx] == c)
 			n++;
-	/* next, break down ps into 'c'-delimited substrings, and call parser function, pf for each substring: */ 
+	/* next, break down ps into 'c'-delimited substrings, and call parser function, pf for each substring: */
 	for (idx=0,p=ps;p && *p;idx++)
 	{
 		char *t = strchr(p,c);
@@ -1867,7 +1925,7 @@ typedef struct
 static void p4(char *s,int idx,int n,void *ctx)
 {
 	funcNameCtx *pfnc = (funcNameCtx *)ctx;
-     
+
 	if (n == 0) /* production (1) */
 	{
 		pfnc->firstLineNumber = atoi(s);
@@ -1952,7 +2010,7 @@ static inline void psmi_initialize(const char **plmf_fileName_kernel,
 	if (!plmf_initialized)
 	{
 		static pthread_mutex_t plmf_init_mutex = PTHREAD_MUTEX_INITIALIZER;
-		
+
 		if (pthread_mutex_lock(&plmf_init_mutex))
 		{
 			perror("cannot lock mutex for psmi_log_message facility");
@@ -1995,13 +2053,13 @@ static inline void psmi_initialize(const char **plmf_fileName_kernel,
 	}
 }
 
-/* Utility function to map the integer txrx value to the given strings for emitting to the log file. */ 
+/* Utility function to map the integer txrx value to the given strings for emitting to the log file. */
 static const char * const TxRxString(int txrx)
 {
 	switch(txrx)
 	{
-	case PSM_LOG_EPM_TX: return "Sent";
-	case PSM_LOG_EPM_RX: return "Received";
+	case PSM2_LOG_EPM_TX: return "Sent";
+	case PSM2_LOG_EPM_RX: return "Received";
 	default:             return "Unknown";
 	}
 }
@@ -2020,35 +2078,274 @@ static const char * const OpcodeString(int opcode)
 	}
 }
 
-/* plmf is short for 'psm log message facility. All of the PSM_LOG macros defined in psm_log.h
+static const char     *plmf_fileName_kernel         = "/tmp/psm2_log";
+static const char     *plmf_search_format_string    = NULL;
+static       treeNode *includeFunctionNamesTreeRoot = NULL;
+static       treeNode *excludeFunctionNamesTreeRoot = NULL;
+
+void psmi_log_initialize(void)
+{
+	/* If not initialized, then, initialize in a single thread of execution. */
+	psmi_initialize(&plmf_fileName_kernel,
+			&plmf_search_format_string,
+			&includeFunctionNamesTreeRoot,
+			&excludeFunctionNamesTreeRoot);
+}
+
+#ifdef PSM2_LOG_FAST_IO
+
+struct psmi_log_io_thread_info
+{
+	pthread_t thread_id;
+	char *buff;
+	unsigned long max_buff_length, curr_buff_length;
+	pthread_mutex_t flags_mutex;
+	volatile int flags;
+#define PSMI_LOG_IO_FLAG_IO_IN_PROGRESS 1  /* io is currently in progress */
+#define PSMI_LOG_IO_FLAG_IO_SHUTDOWN    2  /* we are shutting down logging. */
+};
+
+/* Please note that psmi_log_io_info is in thread local storage. */
+static __thread struct psmi_log_io_thread_info psmi_log_io_info =
+{
+	.thread_id        = 0,
+	.buff             = NULL,
+	.max_buff_length  = 0,
+	.curr_buff_length = 0,
+	.flags_mutex      = PTHREAD_MUTEX_INITIALIZER,
+	.flags            = 0
+};
+
+static struct
+{
+	unsigned int nTableEntries,maxTableEntries;
+	pthread_mutex_t table_mutex;
+	struct psmi_log_io_thread_info **table;
+} psmi_log_io_table =
+{
+	.nTableEntries   = 0,
+	.maxTableEntries = 0,
+	.table_mutex     = PTHREAD_MUTEX_INITIALIZER,
+	.table           = NULL
+};
+
+void psmi_log_fini()
+{
+	if (pthread_mutex_lock(&psmi_log_io_table.table_mutex))
+	{
+		perror("Cannot lock mutex for psmi_log_io_table");
+		return;
+	}
+	/* Start critical section. */
+
+	unsigned int i;
+	for (i=0;i < psmi_log_io_table.nTableEntries;i++)
+	{
+		if (psmi_log_io_table.table[i])
+		{
+			struct psmi_log_io_thread_info *pti = psmi_log_io_table.table[i];
+			int flags;
+
+			if (pthread_mutex_lock(&pti->flags_mutex))
+			{
+				perror("can't lock the flags mutex.");
+				continue;
+			}
+			/* critical section */
+			flags = (pti->flags |= PSMI_LOG_IO_FLAG_IO_SHUTDOWN);
+			/* end critical section */
+			pthread_mutex_unlock(&pti->flags_mutex);
+			/* if io is currenctly in progress, allow it to complete. */
+			while (flags & PSMI_LOG_IO_FLAG_IO_IN_PROGRESS)
+			{
+				sleep(1);
+				if (pthread_mutex_lock(&pti->flags_mutex))
+				{
+					perror("can't lock the flags mutex.");
+					continue;
+				}
+				flags = pti->flags;
+				pthread_mutex_unlock(&pti->flags_mutex);
+			}
+			if (pti->buff)
+			{
+				char logFileName[256];
+				FILE *fout;
+
+				snprintf(logFileName,sizeof(logFileName),"%s.%d.%ld",
+					 plmf_fileName_kernel,getpid(),pti->thread_id);
+				fout = fopen(logFileName,"w");
+				if (!fout)
+				{
+					perror(logFileName);
+					continue;
+				}
+				fwrite(pti->buff,pti->curr_buff_length,1,fout);
+				fclose(fout);
+			}
+		}
+		psmi_log_io_table.table[i] = NULL;
+	}
+	psmi_log_io_table.nTableEntries = 0;
+	psmi_free(psmi_log_io_table.table);
+	psmi_log_io_table.table = NULL;
+	psmi_log_io_table.maxTableEntries = 0;
+	/* End critical section. */
+	pthread_mutex_unlock(&psmi_log_io_table.table_mutex);
+}
+
+static int psmi_log_register_tls(void)
+{
+	if (psmi_log_io_info.thread_id != pthread_self())
+	{
+		psmi_log_io_info.thread_id = pthread_self();
+		if (pthread_mutex_lock(&psmi_log_io_table.table_mutex))
+		{
+			perror("cannot lock table mutex");
+			return -1;
+		}
+		/* critical section start. */
+		if (psmi_log_io_table.maxTableEntries < psmi_log_io_table.nTableEntries+1)
+		{
+			if (psmi_log_io_table.maxTableEntries == 0)
+			{
+				psmi_log_io_table.maxTableEntries = 2;
+				psmi_log_io_table.table = psmi_malloc(PSMI_EP_NONE,
+								      PER_PEER_ENDPOINT,
+								      psmi_log_io_table.maxTableEntries *
+								      sizeof(struct psmi_log_io_thread_info *));
+			}
+			else
+			{
+				psmi_log_io_table.maxTableEntries *= 2;
+				psmi_log_io_table.table = psmi_realloc(PSMI_EP_NONE,
+								       PER_PEER_ENDPOINT,
+								       psmi_log_io_table.table,
+								       psmi_log_io_table.maxTableEntries *
+								       sizeof(struct psmi_log_io_thread_info *));
+			}
+		}
+		psmi_log_io_table.table[psmi_log_io_table.nTableEntries] = &psmi_log_io_info;
+		psmi_log_io_table.nTableEntries++;
+		/* critical section end. */
+		pthread_mutex_unlock(&psmi_log_io_table.table_mutex);
+	}
+	if (pthread_mutex_lock(&psmi_log_io_info.flags_mutex))
+	{
+		perror("cannot lock table mutex");
+		return -1;
+	}
+	/* critical section start. */
+	int old_flags = psmi_log_io_info.flags;
+	int new_flags = old_flags;
+	if (0 == (old_flags & PSMI_LOG_IO_FLAG_IO_SHUTDOWN))
+		new_flags |= PSMI_LOG_IO_FLAG_IO_IN_PROGRESS;
+	psmi_log_io_info.flags = new_flags;
+	/* critical section end. */
+	pthread_mutex_unlock(&psmi_log_io_info.flags_mutex);
+	if (new_flags & PSMI_LOG_IO_FLAG_IO_IN_PROGRESS)
+		return 0;
+	return -1;
+}
+
+static void psmi_buff_fclose(int port)
+{
+	if (pthread_mutex_lock(&psmi_log_io_info.flags_mutex))
+	{
+		perror("cannot lock table mutex");
+		return;
+	}
+	/* critical section start. */
+	psmi_log_io_info.flags &= ~PSMI_LOG_IO_FLAG_IO_IN_PROGRESS;
+	/* critical section end. */
+	pthread_mutex_unlock(&psmi_log_io_info.flags_mutex);
+}
+
+static void growBuff(size_t minExcess)
+{
+       while (psmi_log_io_info.curr_buff_length+minExcess > psmi_log_io_info.max_buff_length)
+	{
+		if (!psmi_log_io_info.buff)
+			psmi_log_io_info.buff = (char *)psmi_malloc(PSMI_EP_NONE, PER_PEER_ENDPOINT,
+								    psmi_log_io_info.max_buff_length = 1 << 20);
+		else
+		{
+			psmi_log_io_info.max_buff_length *= 2;
+			psmi_log_io_info.buff = (char *)psmi_realloc(PSMI_EP_NONE, PER_PEER_ENDPOINT,
+								     psmi_log_io_info.buff,
+								     psmi_log_io_info.max_buff_length);
+		}
+	}
+}
+
+static int psmi_buff_vfprintf(int port, const char *format, va_list ap)
+{
+	int done = 0;
+	size_t excess = 1024;
+	int length;
+
+	while (!done)
+	{
+		growBuff(excess);
+
+		length = vsnprintf(psmi_log_io_info.buff + psmi_log_io_info.curr_buff_length,
+				   excess, format, ap);
+		if (length >= excess)
+			excess *= 2;
+		else
+			done = 1;
+	}
+	psmi_log_io_info.curr_buff_length += length;
+	return length;
+}
+
+static int psmi_buff_fprintf(int port,const char *format, ...)
+{
+	int length;
+	va_list ap;
+
+	va_start(ap, format);
+
+	length = psmi_buff_vfprintf(port,format,ap);
+
+	va_end(ap);
+	return length;
+}
+
+static int psmi_buff_fputc(int c, int port)
+{
+	growBuff(1024);
+	psmi_log_io_info.buff[psmi_log_io_info.curr_buff_length] = c;
+	psmi_log_io_info.curr_buff_length++;
+	return 1;
+}
+#endif
+
+
+/* plmf is short for 'psm log message facility. All of the PSM2_LOG macros defined in psm_log.h
    are serviced from this back end. */
 void psmi_log_message(const char *fileName,
 		      const char *functionName,
 		      int         lineNumber,
 		      const char *format, ...)
 {
-	static const char     *plmf_fileName_kernel         = "/tmp/psm_log";
-	static const char     *plmf_search_format_string    = NULL;
-	static       treeNode *includeFunctionNamesTreeRoot = NULL;
-	static       treeNode *excludeFunctionNamesTreeRoot = NULL;
 	va_list ap;
-	
-	va_start(ap, format);
 
-	/* If not initialized, then, initialize in a single thread of execution. */
-	psmi_initialize(&plmf_fileName_kernel,
-			&plmf_search_format_string,
-			&includeFunctionNamesTreeRoot,
-			&excludeFunctionNamesTreeRoot);
+	va_start(ap, format);
 
 	/* Next, determine if this log message is signal or noise. */
 	if (plmf_search_format_string)
 	{
-		if((format != PSM_LOG_BT_MAGIC) && (format != PSM_LOG_EPM_MAGIC))
+		if((format != PSM2_LOG_BT_MAGIC)  &&
+		   (format != PSM2_LOG_EPM_MAGIC) &&
+		   (format != PSM2_LOG_DUMP_MAGIC))
 		{
 			if (fnmatch(plmf_search_format_string, format, 0))
+			{
+				va_end(ap);
 				/* tis noise, return. */
 				return;
+			}
 		}
 	}
 	else
@@ -2056,21 +2353,27 @@ void psmi_log_message(const char *fileName,
 		if (includeFunctionNamesTreeRoot)
 		{
 			if (lookupNodeInTree(includeFunctionNamesTreeRoot,functionName,lineNumber))
+			{
+				va_end(ap);
 				/* tis noise, return. */
 				return;
+			}
 		}
 
 		if (excludeFunctionNamesTreeRoot)
 		{
 			if (!lookupNodeInTree(excludeFunctionNamesTreeRoot,functionName,lineNumber))
+			{
+				va_end(ap);
 				/* tis noise, return. */
 				return;
+			}
 		}
 	}
 
 	/* At this point, we think that this may be a message that we want to emit to the log.
-	   But, there is one more test, to apply to the two cases where (format == PSM_LOG_BT_MAGIC 
-	   and format == PSM_LOG_EPM_MAGIC. */
+	   But, there is one more test, to apply to the two cases where (format == PSM2_LOG_BT_MAGIC
+	   and format == PSM2_LOG_EPM_MAGIC and format == PSM2_LOG_DUMP_MAGIC. */
 	{
 		void      **voidarray      = NULL;   /*va_arg(ap,void **);*/
 		int         nframes        = 0;      /*va_arg(ap,int);*/
@@ -2079,66 +2382,101 @@ void psmi_log_message(const char *fileName,
 		int         txrx           = 0;
 		uint64_t    fromepid       = 0;
 		uint64_t    toepid         = 0;
+		void       *dumpAddr       = 0;
+		size_t      dumpSize       = 0;
+
+#ifdef PSM2_LOG_FAST_IO
+#define IO_PORT         0
+#define MY_FPRINTF      psmi_buff_fprintf
+#define MY_VFPRINTF     psmi_buff_vfprintf
+#define MY_FPUTC        psmi_buff_fputc
+#define MY_FCLOSE       psmi_buff_fclose
+#else
 		char logFileName[256];
 		FILE *fout;
+#define IO_PORT         fout
+#define MY_FPRINTF      fprintf
+#define MY_VFPRINTF     vfprintf
+#define MY_FPUTC        fputc
+#define MY_FCLOSE       fclose
+#endif
 		struct timespec tp;
-		
-		if (format == PSM_LOG_BT_MAGIC)
+
+		/* Pop arguments for the alternative forms of PSM2_LOG functionality: */
+		if (format == PSM2_LOG_BT_MAGIC)
 		{
 			voidarray = va_arg(ap,void **);
 			nframes   = va_arg(ap,int);
 			newFormat = va_arg(ap,const char *);
-			/* One last test to make sure that this message is signal: */
-			if (plmf_search_format_string)
-			{
-				{
-					if (fnmatch(plmf_search_format_string, newFormat, 0))
-						/* tis noise, return. */
-						return;
-				}
-			}
 		}
-		else if (format == PSM_LOG_EPM_MAGIC)
+		else if (format == PSM2_LOG_EPM_MAGIC)
 		{
 			opcode    = va_arg(ap,int);
 			txrx      = va_arg(ap,int);
 			fromepid  = va_arg(ap,uint64_t);
 			toepid    = va_arg(ap,uint64_t);
 			newFormat = va_arg(ap,const char *);
-			/* One last test to make sure that this message is signal: */
-			if (plmf_search_format_string)
+		}
+		else if (format == PSM2_LOG_DUMP_MAGIC)
+		{
+			dumpAddr  = va_arg(ap,void*);
+			dumpSize  = va_arg(ap,size_t);
+			newFormat = va_arg(ap,const char *);
+		}
+
+		/* One last test to make sure that this message is signal: */
+		if (plmf_search_format_string && newFormat)
+		{
+			if (fnmatch(plmf_search_format_string, newFormat, 0))
 			{
-				{
-					if (fnmatch(plmf_search_format_string, newFormat, 0))
-						/* tis noise, return. */
-						return;
-				}
+				va_end(ap);
+				/* tis noise, return. */
+				return;
 			}
 		}
 
+#ifdef PSM2_LOG_FAST_IO
+		if (psmi_log_register_tls() != 0)
+		{
+			va_end(ap);
+			return;
+		}
+#else
 		/* At this point we know that the message is not noise, and it is going to be emitted to the log. */
-		snprintf(logFileName,sizeof(logFileName),"%s.%d.%ld",plmf_fileName_kernel,getpid(),pthread_self());
+		snprintf(logFileName,sizeof(logFileName),"%s.%d.%ld",
+			 plmf_fileName_kernel,getpid(),
+			 pthread_self());
 		fout = fopen(logFileName,"a");
 		if (!fout)
+		{
+			va_end(ap);
 			return;
-		
-#define M1()	clock_gettime(CLOCK_REALTIME, &tp);fprintf(fout,"%f %s %s:%d: ",(double)tp.tv_sec + ((double)tp.tv_nsec/1000000000.0),functionName,fileName,lineNumber)
+		}
+#endif
+
+#define M1()	clock_gettime(CLOCK_REALTIME, &tp);				 	\
+			MY_FPRINTF(IO_PORT,"%f %s %s:%d: ",				\
+			   (double)tp.tv_sec + ((double)tp.tv_nsec/1000000000.0),	\
+			   functionName,fileName,lineNumber)
 
 		M1();
 
-		if ((format != PSM_LOG_BT_MAGIC) && (format != PSM_LOG_EPM_MAGIC))
+		if ((format != PSM2_LOG_BT_MAGIC)  &&
+		    (format != PSM2_LOG_EPM_MAGIC) &&
+		    (format != PSM2_LOG_DUMP_MAGIC))
 		{
-			vfprintf(fout,format,ap);
-			fputc('\n',fout);
+			MY_VFPRINTF(IO_PORT,format,ap);
+			MY_FPUTC('\n',IO_PORT);
 		}
-		else if (format == PSM_LOG_BT_MAGIC)
+		else if (format == PSM2_LOG_BT_MAGIC)
 		{
-			void *newframes[PSM_LOG_BT_BUFFER_SIZE];
-			int  newframecnt      = backtrace(newframes, PSM_LOG_BT_BUFFER_SIZE);
+			void *newframes[PSM2_LOG_BT_BUFFER_SIZE];
+			int  newframecnt      = backtrace(newframes,
+							  PSM2_LOG_BT_BUFFER_SIZE);
 			int  pframes          = min(newframecnt,nframes);
 
-			vfprintf(fout,newFormat,ap);
-			fputc('\n',fout);
+			MY_VFPRINTF(IO_PORT,newFormat,ap);
+			MY_FPUTC('\n',IO_PORT);
 
 			if (memcmp(voidarray,newframes,pframes * sizeof(void*)))
 			{
@@ -2147,52 +2485,83 @@ void psmi_log_message(const char *fileName,
 
 				memcpy(voidarray,newframes,sizeof(newframes));
 				M1();
-				fprintf(fout,"backtrace() returned %d addresses\n", newframecnt);
-
+				MY_FPRINTF(IO_PORT,
+					   "backtrace() returned %d addresses\n",
+					   newframecnt);
 				strings = backtrace_symbols(voidarray, pframes);
 				if (strings == NULL)
 				{
 					perror("backtrace_symbols");
 					exit(EXIT_FAILURE);
 				}
-
 				for (i = 0; i < pframes; i++)
 				{
 					M1();
-					fprintf(fout,"%s\n", strings[i]);
+					MY_FPRINTF(IO_PORT,"%s\n", strings[i]);
 				}
-
 #undef free
 				free(strings);
 			}
-
 		}
-		else /* (format == PSM_LOG_EPM_MAGIC) */
+		else if (format == PSM2_LOG_EPM_MAGIC)
 		{
 			static epmTreeNode *root = 0;
-			static pthread_mutex_t plmf_epm_mutex = PTHREAD_MUTEX_INITIALIZER;
+			static pthread_mutex_t plmf_epm_mutex =
+				PTHREAD_MUTEX_INITIALIZER;
 			int *pcount = 0;
 			if (pthread_mutex_lock(&plmf_epm_mutex))
 			{
-				perror("cannot lock mutex for psmi_log_message facility");
+				perror("cannot lock mutex for "
+				       "psmi_log_message facility");
+				va_end(ap);
 				return;
 			}
 			/* START OF CRITICAL SECTION */
-			pcount = insertNodeInEpmTree(&root,opcode,txrx,fromepid,toepid);
+			pcount = insertNodeInEpmTree(&root,opcode,txrx,
+						     fromepid,toepid);
 			/* END OF CRITICAL SECTION */
 			if (pthread_mutex_unlock(&plmf_epm_mutex))
 			{
-				perror("cannot unlock mutex for psmi_log_message facility");
+				perror("cannot unlock mutex for "
+				       "psmi_log_message facility");
+				va_end(ap);
 				return;
 			}
 			(*pcount)++;
-			fprintf(fout,"%s %s from: %" PRIx64 ", to: %" PRIx64 ", count: %d, ",TxRxString(txrx),OpcodeString(opcode),fromepid,toepid,*pcount);
-			vfprintf(fout,newFormat,ap);
-			fputc('\n',fout);
+			MY_FPRINTF(IO_PORT,"%s %s from: %" PRIx64
+				   ", to: %" PRIx64 ", count: %d, ",
+				   TxRxString(txrx),OpcodeString(opcode),
+				   fromepid,toepid,*pcount);
+			MY_VFPRINTF(IO_PORT,newFormat,ap);
+			MY_FPUTC('\n',IO_PORT);
 		}
-		fclose(fout);
+		else /* if (format == PSM2_LOG_DUMP_MAGIC) */
+		{
+			MY_VFPRINTF(IO_PORT,newFormat,ap);
+			MY_FPUTC('\n',IO_PORT);
+			M1();
+
+			uint8_t *pu8 = (uint8_t *)dumpAddr;
+			size_t   i,cnt=0;
+			for (i=0;i < dumpSize;i++)
+			{
+				if ((i != 0) && ((i % 8) == 0))
+				{
+					MY_FPRINTF(IO_PORT," (%d)\n",(int)(i-8));
+					M1();
+					cnt = 0;
+				}
+				else if (cnt)
+					MY_FPUTC(',',IO_PORT);
+				MY_FPRINTF(IO_PORT,"0x%02x", pu8[i-1]);
+				cnt++;
+			}
+			if (cnt)
+				MY_FPRINTF(IO_PORT," (%d)\n",(int)(i-8));
+		}
+		MY_FCLOSE(IO_PORT);
 	}
 
 	va_end(ap);
 }
-#endif /* #ifdef PSM_LOG */
+#endif /* #ifdef PSM2_LOG */

@@ -51,22 +51,39 @@
 #  Copyright (c) 2003-2014 Intel Corporation. All rights reserved.
 #
 
-top_srcdir := ..
-include $(top_srcdir)/buildflags.mak
+OUTDIR = .
+
+this_srcdir = $(shell readlink -m .)
+top_srcdir := $(this_srcdir)/..
 INCLUDES += -I$(top_srcdir)
 
 ${TARGLIB}-objs := ptl.o
+${TARGLIB}-objs := $(patsubst %.o, $(OUTDIR)/%.o, ${${TARGLIB}-objs})
+DEPS := $(${TARGLIB}-objs:.o=.d)
 
-DEPS:= $(${TARGLIB}-objs:.o=.d)
--include $(DEPS)
+.PHONY: all clean
+IGNORE_DEP_TARGETS = clean
 
-all: ${${TARGLIB}-objs}
+all .DEFAULT: ${${TARGLIB}-objs}
 
-%.o: %.c
-	$(CC) $(CFLAGS) $(INCLUDES) -MMD -c $< -o $@
+$(OUTDIR)/%.d: $(this_srcdir)/%.c
+	$(CC) $(CFLAGS) $(BASECFLAGS) $(INCLUDES) $< -MM -MF $@ -MQ $(@:.d=.o)
+
+$(OUTDIR)/%.o: $(this_srcdir)/%.c | ${DEPS}
+	$(CC) $(CFLAGS) $(BASECFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
-	rm -f *.o *.d *.gcda *.gcno
+	@if [ -d $(OUTDIR) ]; then \
+		cd $(OUTDIR); \
+		rm -f *.o *.d *.gcda *.gcno; \
+		cd -; \
+	fi
+
+#ifeq prevents the deps from being included during clean
+#-include line is required to pull in auto-dependecies during 2nd pass
+ifeq ($(filter $(IGNORE_DEP_TARGETS), $(MAKECMDGOALS)),)
+-include ${DEPS}
+endif
 
 install:
 	@echo "Nothing to do for install."
