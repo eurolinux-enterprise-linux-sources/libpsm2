@@ -62,6 +62,4 @@ typedef struct ips_msgctl ips_msgctl_t;
 
 /* Symbol in ips ptl */
 struct ptl_ctl_init psmi_ptl_ips;
-
-struct ptl_ctl_rcvthread psmi_ptl_ips_rcvthread;
 #endif /* _PTL_FWD_IPS_H */

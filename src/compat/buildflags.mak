@@ -88,12 +88,15 @@ ASFLAGS += -g3 -fpic
 
 ifeq (${CCARCH},icc)
     BASECFLAGS += -O3 -g3
+    CFLAGS += $(BASECFLAGS)
     LDFLAGS += -static-intel
 else
 	ifeq (${CCARCH},gcc)
-	    BASECFLAGS += -Wno-strict-aliasing
+	    CFLAGS += $(BASECFLAGS) -Wno-strict-aliasing
 	else
-		ifneq (${CCARCH},gcc4)
+		ifeq (${CCARCH},gcc4)
+			CFLAGS += $(BASECFLAGS)
+		else
 			$(error Unknown compiler arch "${CCARCH}")
 		endif
 	endif

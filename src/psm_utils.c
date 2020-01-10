@@ -401,15 +401,12 @@ static int psmi_getenv_is_verblevel(int printlevel)
 	return (printlevel <= psmi_getenv_verblevel);
 }
 
-#define GETENV_PRINTF(_level, _fmt, ...)				\
-	do {								\
-		if ((_level & PSMI_ENVVAR_LEVEL_NEVER_PRINT) == 0)	\
-		{							\
-			int nlevel = _level;				\
-			if (psmi_getenv_is_verblevel(nlevel))		\
-				nlevel = 0;				\
-			_HFI_ENVDBG(nlevel, _fmt, ##__VA_ARGS__);	\
-		}							\
+#define GETENV_PRINTF(_level, _fmt, ...)			\
+	do {							\
+		int nlevel = _level;				\
+		if (psmi_getenv_is_verblevel(nlevel))		\
+		nlevel = 0;					\
+		_HFI_ENVDBG(nlevel, _fmt, ##__VA_ARGS__);	\
 	} while (0)
 
 int
@@ -440,23 +437,6 @@ MOCKABLE(psmi_getenv)(const char *name, const char *descr, int level,
 				level > 1 ? "*" : " ", name, descr,	\
 				ishex ? " 0x" : " ", val,		\
 				ishex ? " 0x" : " ", defval);		\
-	} while (0)
-
-/* _CONSUMED_ALL() is a macro which indicates if strtol() consumed all
-   of the input passed to it. */
-#define _CONSUMED_ALL(CHAR_PTR) (((CHAR_PTR) != NULL) && (*(CHAR_PTR) == 0))
-#define _CONVERT_TO_NUM(DEST,TYPE,STRTOL)						\
-	do {										\
-		char *ep;								\
-		/* Avoid base 8 (octal) on purpose, so don't pass in 0 for radix */	\
-		DEST = (TYPE)STRTOL(env, &ep, 10);					\
-		if (! _CONSUMED_ALL(ep)) {						\
-			DEST = (TYPE)STRTOL(env, &ep, 16);				\
-			if (! _CONSUMED_ALL(ep)) {					\
-				used_default = 1;					\
-				tval = defval;						\
-			}								\
-		}									\
 	} while (0)
 
 	switch (type) {
@@ -495,7 +475,12 @@ MOCKABLE(psmi_getenv)(const char *name, const char *descr, int level,
 			tval = defval;
 			used_default = 1;
 		} else {
-			_CONVERT_TO_NUM(tval.e_int,int,strtol);
+			char *ep;
+			tval.e_int = (int)strtol(env, &ep, 0);
+			if (ep == env) {
+				used_default = 1;
+				tval = defval;
+			}
 		}
 		_GETENV_PRINT(used_default, "%d", tval.e_int, defval.e_int);
 		break;
@@ -506,7 +491,12 @@ MOCKABLE(psmi_getenv)(const char *name, const char *descr, int level,
 			tval = defval;
 			used_default = 1;
 		} else {
-			_CONVERT_TO_NUM(tval.e_int,unsigned int,strtoul);
+			char *ep;
+			tval.e_int = (unsigned int)strtoul(env, &ep, 0);
+			if (ep == env) {
+				used_default = 1;
+				tval = defval;
+			}
 		}
 		if (type == PSMI_ENVVAR_TYPE_UINT_FLAGS)
 			_GETENV_PRINT(used_default, "%x", tval.e_uint,
@@ -521,7 +511,12 @@ MOCKABLE(psmi_getenv)(const char *name, const char *descr, int level,
 			tval = defval;
 			used_default = 1;
 		} else {
-			_CONVERT_TO_NUM(tval.e_long,long,strtol);
+			char *ep;
+			tval.e_long = strtol(env, &ep, 0);
+			if (ep == env) {
+				used_default = 1;
+				tval = defval;
+			}
 		}
 		_GETENV_PRINT(used_default, "%ld", tval.e_long, defval.e_long);
 		break;
@@ -530,7 +525,13 @@ MOCKABLE(psmi_getenv)(const char *name, const char *descr, int level,
 			tval = defval;
 			used_default = 1;
 		} else {
-			_CONVERT_TO_NUM(tval.e_ulonglong,unsigned long long,strtoull);
+			char *ep;
+			tval.e_ulonglong =
+			    (unsigned long long)strtoull(env, &ep, 0);
+			if (ep == env) {
+				used_default = 1;
+				tval = defval;
+			}
 		}
 		_GETENV_PRINT(used_default, "%llu",
 			      tval.e_ulonglong, defval.e_ulonglong);
@@ -542,7 +543,12 @@ MOCKABLE(psmi_getenv)(const char *name, const char *descr, int level,
 			tval = defval;
 			used_default = 1;
 		} else {
-			_CONVERT_TO_NUM(tval.e_ulong,unsigned long,strtoul);
+			char *ep;
+			tval.e_ulong = (unsigned long)strtoul(env, &ep, 0);
+			if (ep == env) {
+				used_default = 1;
+				tval = defval;
+			}
 		}
 		if (type == PSMI_ENVVAR_TYPE_ULONG_FLAGS)
 			_GETENV_PRINT(used_default, "%lx", tval.e_ulong,
@@ -1676,7 +1682,7 @@ psm2_error_t psmi_am_getopt(const void *am_obj, int optname,
 	return psmi_amopt_ctl(am_obj, optname, optval, optlen, 1);
 }
 
-#ifdef PSM2_LOG
+#ifdef PSM_LOG
 
 #include <execinfo.h>
 #include <stdio.h>
@@ -1686,7 +1692,7 @@ psm2_error_t psmi_am_getopt(const void *am_obj, int optname,
 #include "ptl_ips/ips_proto_header.h"
 
 /* A treeNode is used to store the list of Function Name Lists that
-   are passed to the PSM2_LOG facility via environment variables.
+   are passed to the PSM_LOG facility via environment variables.
    See psm_log.h for more information.
 
    Note that treeNode is a node in a binary tree data structure. */
@@ -2058,8 +2064,8 @@ static const char * const TxRxString(int txrx)
 {
 	switch(txrx)
 	{
-	case PSM2_LOG_EPM_TX: return "Sent";
-	case PSM2_LOG_EPM_RX: return "Received";
+	case PSM_LOG_EPM_TX: return "Sent";
+	case PSM_LOG_EPM_RX: return "Received";
 	default:             return "Unknown";
 	}
 }
@@ -2092,7 +2098,7 @@ void psmi_log_initialize(void)
 			&excludeFunctionNamesTreeRoot);
 }
 
-#ifdef PSM2_LOG_FAST_IO
+#ifdef PSM_LOG_FAST_IO
 
 struct psmi_log_io_thread_info
 {
@@ -2322,7 +2328,7 @@ static int psmi_buff_fputc(int c, int port)
 #endif
 
 
-/* plmf is short for 'psm log message facility. All of the PSM2_LOG macros defined in psm_log.h
+/* plmf is short for 'psm log message facility. All of the PSM_LOG macros defined in psm_log.h
    are serviced from this back end. */
 void psmi_log_message(const char *fileName,
 		      const char *functionName,
@@ -2336,9 +2342,7 @@ void psmi_log_message(const char *fileName,
 	/* Next, determine if this log message is signal or noise. */
 	if (plmf_search_format_string)
 	{
-		if((format != PSM2_LOG_BT_MAGIC)  &&
-		   (format != PSM2_LOG_EPM_MAGIC) &&
-		   (format != PSM2_LOG_DUMP_MAGIC))
+		if((format != PSM_LOG_BT_MAGIC) && (format != PSM_LOG_EPM_MAGIC))
 		{
 			if (fnmatch(plmf_search_format_string, format, 0))
 			{
@@ -2372,8 +2376,8 @@ void psmi_log_message(const char *fileName,
 	}
 
 	/* At this point, we think that this may be a message that we want to emit to the log.
-	   But, there is one more test, to apply to the two cases where (format == PSM2_LOG_BT_MAGIC
-	   and format == PSM2_LOG_EPM_MAGIC and format == PSM2_LOG_DUMP_MAGIC. */
+	   But, there is one more test, to apply to the two cases where (format == PSM_LOG_BT_MAGIC
+	   and format == PSM_LOG_EPM_MAGIC. */
 	{
 		void      **voidarray      = NULL;   /*va_arg(ap,void **);*/
 		int         nframes        = 0;      /*va_arg(ap,int);*/
@@ -2382,10 +2386,8 @@ void psmi_log_message(const char *fileName,
 		int         txrx           = 0;
 		uint64_t    fromepid       = 0;
 		uint64_t    toepid         = 0;
-		void       *dumpAddr       = 0;
-		size_t      dumpSize       = 0;
 
-#ifdef PSM2_LOG_FAST_IO
+#ifdef PSM_LOG_FAST_IO
 #define IO_PORT         0
 #define MY_FPRINTF      psmi_buff_fprintf
 #define MY_VFPRINTF     psmi_buff_vfprintf
@@ -2402,40 +2404,46 @@ void psmi_log_message(const char *fileName,
 #endif
 		struct timespec tp;
 
-		/* Pop arguments for the alternative forms of PSM2_LOG functionality: */
-		if (format == PSM2_LOG_BT_MAGIC)
+		if (format == PSM_LOG_BT_MAGIC)
 		{
 			voidarray = va_arg(ap,void **);
 			nframes   = va_arg(ap,int);
 			newFormat = va_arg(ap,const char *);
+			/* One last test to make sure that this message is signal: */
+			if (plmf_search_format_string)
+			{
+				{
+					if (fnmatch(plmf_search_format_string, newFormat, 0))
+					{
+						va_end(ap);
+						/* tis noise, return. */
+						return;
+					}
+				}
+			}
 		}
-		else if (format == PSM2_LOG_EPM_MAGIC)
+		else if (format == PSM_LOG_EPM_MAGIC)
 		{
 			opcode    = va_arg(ap,int);
 			txrx      = va_arg(ap,int);
 			fromepid  = va_arg(ap,uint64_t);
 			toepid    = va_arg(ap,uint64_t);
 			newFormat = va_arg(ap,const char *);
-		}
-		else if (format == PSM2_LOG_DUMP_MAGIC)
-		{
-			dumpAddr  = va_arg(ap,void*);
-			dumpSize  = va_arg(ap,size_t);
-			newFormat = va_arg(ap,const char *);
-		}
-
-		/* One last test to make sure that this message is signal: */
-		if (plmf_search_format_string && newFormat)
-		{
-			if (fnmatch(plmf_search_format_string, newFormat, 0))
+			/* One last test to make sure that this message is signal: */
+			if (plmf_search_format_string)
 			{
-				va_end(ap);
-				/* tis noise, return. */
-				return;
+				{
+					if (fnmatch(plmf_search_format_string, newFormat, 0))
+					{
+						va_end(ap);
+						/* tis noise, return. */
+						return;
+					}
+				}
 			}
 		}
 
-#ifdef PSM2_LOG_FAST_IO
+#ifdef PSM_LOG_FAST_IO
 		if (psmi_log_register_tls() != 0)
 		{
 			va_end(ap);
@@ -2461,18 +2469,16 @@ void psmi_log_message(const char *fileName,
 
 		M1();
 
-		if ((format != PSM2_LOG_BT_MAGIC)  &&
-		    (format != PSM2_LOG_EPM_MAGIC) &&
-		    (format != PSM2_LOG_DUMP_MAGIC))
+		if ((format != PSM_LOG_BT_MAGIC) && (format != PSM_LOG_EPM_MAGIC))
 		{
 			MY_VFPRINTF(IO_PORT,format,ap);
 			MY_FPUTC('\n',IO_PORT);
 		}
-		else if (format == PSM2_LOG_BT_MAGIC)
+		else if (format == PSM_LOG_BT_MAGIC)
 		{
-			void *newframes[PSM2_LOG_BT_BUFFER_SIZE];
+			void *newframes[PSM_LOG_BT_BUFFER_SIZE];
 			int  newframecnt      = backtrace(newframes,
-							  PSM2_LOG_BT_BUFFER_SIZE);
+							  PSM_LOG_BT_BUFFER_SIZE);
 			int  pframes          = min(newframecnt,nframes);
 
 			MY_VFPRINTF(IO_PORT,newFormat,ap);
@@ -2488,22 +2494,26 @@ void psmi_log_message(const char *fileName,
 				MY_FPRINTF(IO_PORT,
 					   "backtrace() returned %d addresses\n",
 					   newframecnt);
+
 				strings = backtrace_symbols(voidarray, pframes);
 				if (strings == NULL)
 				{
 					perror("backtrace_symbols");
 					exit(EXIT_FAILURE);
 				}
+
 				for (i = 0; i < pframes; i++)
 				{
 					M1();
 					MY_FPRINTF(IO_PORT,"%s\n", strings[i]);
 				}
+
 #undef free
 				free(strings);
 			}
+
 		}
-		else if (format == PSM2_LOG_EPM_MAGIC)
+		else /* (format == PSM_LOG_EPM_MAGIC) */
 		{
 			static epmTreeNode *root = 0;
 			static pthread_mutex_t plmf_epm_mutex =
@@ -2535,33 +2545,9 @@ void psmi_log_message(const char *fileName,
 			MY_VFPRINTF(IO_PORT,newFormat,ap);
 			MY_FPUTC('\n',IO_PORT);
 		}
-		else /* if (format == PSM2_LOG_DUMP_MAGIC) */
-		{
-			MY_VFPRINTF(IO_PORT,newFormat,ap);
-			MY_FPUTC('\n',IO_PORT);
-			M1();
-
-			uint8_t *pu8 = (uint8_t *)dumpAddr;
-			size_t   i,cnt=0;
-			for (i=0;i < dumpSize;i++)
-			{
-				if ((i != 0) && ((i % 8) == 0))
-				{
-					MY_FPRINTF(IO_PORT," (%d)\n",(int)(i-8));
-					M1();
-					cnt = 0;
-				}
-				else if (cnt)
-					MY_FPUTC(',',IO_PORT);
-				MY_FPRINTF(IO_PORT,"0x%02x", pu8[i-1]);
-				cnt++;
-			}
-			if (cnt)
-				MY_FPRINTF(IO_PORT," (%d)\n",(int)(i-8));
-		}
 		MY_FCLOSE(IO_PORT);
 	}
 
 	va_end(ap);
 }
-#endif /* #ifdef PSM2_LOG */
+#endif /* #ifdef PSM_LOG */

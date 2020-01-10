@@ -1,16 +1,15 @@
 Summary: Intel PSM Libraries
 Name: libpsm2
-Version: 10.3.58
-Release: 1%{?dist}
+Version: 10.3.8
+Release: 3%{?dist}
 License: GPLv2 or BSD
 URL: https://github.com/01org/opa-psm2
 # Source tarball obtained by:
 # git clone https://github.com/01org/opa-psm2
 # cd opa-psm2
-# # Latest commit id is 0f9213e7af8d32c291d4657ff4a3279918de1e60.
+# # Latest commit id is a96419140a6942a11a1438bbffc4c27475d61030.
 # make dist
 Source0: %{name}-%{version}.tar.gz
-Patch1: extend-fdesc-array.patch
 BuildRequires: kernel-headers >= 3.10.0-455
 BuildRequires: gcc
 BuildRequires: libuuid-devel
@@ -53,14 +52,12 @@ LD_LIBRARY_PATH=%{_libdir}/psm2-compat
 %prep
 %setup -q
 find . -type f -iname '*.[ch]' -exec chmod a-x '{}' ';'
-%patch1
 
 %build
 CFLAGS="%{optflags}" make %{?_smp_mflags}
 
 %install
 %make_install
-rm -f %{buildroot}%{_libdir}/*.a
 
 %post -p /sbin/ldconfig
 %postun -p /sbin/ldconfig
@@ -87,10 +84,6 @@ rm -f %{buildroot}%{_libdir}/*.a
 
 
 %changelog
-* Wed Jun 20 2018 Honggang Li <honli@redhat.com> - 10.3.58-1
-- Rebase to latest upstream release PSM2_10.3.58
-- Resolves: bz1483573
-
 * Tue Jan  9 2018 Honggang Li <honli@redhat.com> - 10.3.8-3
 - libpsm2-compat: Filter libpsm_infinipath.so.1 as private library
 - Resolves: bz1396213

@@ -659,7 +659,7 @@ MOCKABLE(ips_ibta_init)(struct ips_proto *proto)
 		_HFI_PRDBG("Static path selection: Base LID\n");
 
 	psmi_getenv("PSM2_DISABLE_CCA",
-		    "Disable use of Congestion Control Architecture (CCA) [enabled] ",
+		    "Disable use of Congestion Control Architecure (CCA) [enabled] ",
 		    PSMI_ENVVAR_LEVEL_USER, PSMI_ENVVAR_TYPE_UINT,
 		    (union psmi_envvar_val)0, &disable_cca);
 	if (disable_cca.e_uint)
@@ -692,7 +692,7 @@ MOCKABLE(ips_ibta_init)(struct ips_proto *proto)
  */
 		i = hfi_get_cc_settings_bin(proto->ep->context.ctrl->__hfi_unit,
 					    proto->ep->context.ctrl->__hfi_port,
-					    ccabuf, sizeof(ccabuf));
+					    ccabuf);
 		if (i <= 0) {
 			goto disablecca;
 		}

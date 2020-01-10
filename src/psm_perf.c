@@ -62,14 +62,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <asm/unistd.h>
-#include <linux/perf_event.h>
 
-/* Configuration */
-
-#define RDPMC_PERF_DEFAULT_TYPE   (PERF_TYPE_HARDWARE)
-#define RDPMC_PERF_DEFAULT_CONFIG (PERF_COUNT_HW_CPU_CYCLES)
-
-__thread struct rdpmc_ctx global_rdpmc_ctx;
+struct rdpmc_ctx global_rdpmc_ctx;
 
 u64 global_rdpmc_begin[RDPMC_PERF_MAX_SLOT_NUMBER];
 u64 global_rdpmc_summ[RDPMC_PERF_MAX_SLOT_NUMBER];
@@ -77,8 +71,8 @@ u64 global_rdpmc_number[RDPMC_PERF_MAX_SLOT_NUMBER];
 
 char global_rdpmc_slot_name[RDPMC_PERF_MAX_SLOT_NUMBER][RDPMC_PERF_MAX_SLOT_NAME];
 
-__thread unsigned int global_rdpmc_type   = RDPMC_PERF_DEFAULT_TYPE;
-__thread unsigned int global_rdpmc_config = RDPMC_PERF_DEFAULT_CONFIG;
+unsigned int global_rdpmc_type   = RDPMC_PERF_DEFAULT_TYPE;
+unsigned int global_rdpmc_config = RDPMC_PERF_DEFAULT_CONFIG;
 
 struct rdpmc_ctx {
 	int fd;
@@ -166,7 +160,36 @@ PSMI_ALWAYS_INLINE(void rdpmc_close(struct rdpmc_ctx *ctx))
 	munmap(ctx->buf, sysconf(_SC_PAGESIZE));
 }
 
-static void psmi_rdpmc_perf_framework_init()
+/**
+ * rdpmc_read: read a ring 3 readable performance counter
+ * @ctx: Pointer to initialized &rdpmc_ctx structure.
+ *
+ * Read the current value of a running performance counter.
+ */
+unsigned long long rdpmc_read(struct rdpmc_ctx *ctx)
+{
+	u64 val;
+	unsigned seq;
+	u64 offset = 0;
+
+	typeof (ctx->buf) buf = ctx->buf;
+	do {
+		seq = buf->lock;
+		ips_rmb();
+		if (buf->index <= 0)
+			return buf->offset;
+#if defined(__ICC) || defined(__INTEL_COMPILER)
+                val = _rdpmc(buf->index - 1);
+#else /* GCC */
+                val = __builtin_ia32_rdpmc(buf->index - 1);
+#endif
+		offset = buf->offset;
+		ips_rmb();
+	} while (buf->lock != seq);
+	return val + offset;
+}
+
+void psmi_rdpmc_perf_framework_init()
 {
     int rdpmc_retval;
 
@@ -218,43 +241,6 @@ static void psmi_rdpmc_perf_framework_init()
         printf("Unable to initialize RDPMC. Error: %d\n", rdpmc_retval);
         exit(-1);
     }
-}
-
-/**
- * rdpmc_read: read a ring 3 readable performance counter
- * @ctx: Pointer to initialized &rdpmc_ctx structure.
- *
- * Read the current value of a running performance counter.
- */
-unsigned long long rdpmc_read(struct rdpmc_ctx *ctx)
-{
-	static __thread int rdpmc_perf_initialized = 0;
-
-	if_pf(!rdpmc_perf_initialized)
-	{
-		psmi_rdpmc_perf_framework_init();
-		rdpmc_perf_initialized = 1;
-	}
-
-	u64 val;
-	unsigned seq;
-	u64 offset = 0;
-
-	typeof (ctx->buf) buf = ctx->buf;
-	do {
-		seq = buf->lock;
-		ips_rmb();
-		if (buf->index <= 0)
-			return buf->offset;
-#if defined(__ICC) || defined(__INTEL_COMPILER)
-                val = _rdpmc(buf->index - 1);
-#else /* GCC */
-                val = __builtin_ia32_rdpmc(buf->index - 1);
-#endif
-		offset = buf->offset;
-		ips_rmb();
-	} while (buf->lock != seq);
-	return val + offset;
 }
 
 #endif /* RDPMC_PERF_FRAMEWORK */

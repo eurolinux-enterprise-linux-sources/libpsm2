@@ -59,8 +59,10 @@ MINOR := $(OPA_LIB_MINOR)
 
 this_srcdir := $(shell readlink -m .)
 top_srcdir := $(this_srcdir)/..
-
+include $(top_srcdir)/buildflags.mak
+BASECFLAGS += -D_GNU_SOURCE
 INCLUDES += -I$(top_srcdir) -I$(top_srcdir)/ptl_ips
+
 ifeq (${arch},x86_64)
 	PLATFORM_OBJ=opa_dwordcpy-x86_64-fast.o
 else
@@ -84,13 +86,13 @@ install: all
 	@echo "Nothing to do for install."
 
 $(OUTDIR)/%.d:  $(this_srcdir)/%.c
-	$(CC) $(CFLAGS) $(BASECFLAGS) $(INCLUDES) $< -MM -MF $@ -MQ $(@:.d=.o)
+	$(CC) $(CFLAGS) $(INCLUDES) $< -MM -MF $@ -MQ $(@:.d=.o)
 
 $(OUTDIR)/%.d:  $(this_srcdir)/%.S
-	$(CC) $(CFLAGS) $(BASECFLAGS) $(INCLUDES) $< -MM -MF $@ -MQ $(@:.d=.o)
+	$(CC) $(CFLAGS) $(INCLUDES) $< -MM -MF $@ -MQ $(@:.d=.o)
 
 $(OUTDIR)/%.o: $(this_srcdir)/%.c | ${DEPS}
-	$(CC) $(CFLAGS) $(BASECFLAGS) $(INCLUDES) -c $< -o $@
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 $(OUTDIR)/%.o: $(this_srcdir)/%.S | ${DEPS}
 	$(CC) $(ASFLAGS) -c $< -o $@

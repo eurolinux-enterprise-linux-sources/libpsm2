@@ -55,7 +55,8 @@ OUTDIR = .
 
 this_srcdir := $(shell readlink -m .)
 top_srcdir := $(this_srcdir)/..
-BASECFLAGS += -DPSM_UUID=1 -Wno-unused-function
+include $(top_srcdir)/buildflags.mak
+CFLAGS += -DPSM_UUID=1 -Wno-unused-function
 INCLUDES += -I$(top_srcdir)
 
 ${TARGLIB}-objs := psm_uuid.o parse.o pack.o unpack.o unparse.o
@@ -69,10 +70,10 @@ IGNORE_DEP_TARGETS = clean
 all .DEFAULT: ${${TARGLIB}-objs}
 
 $(OUTDIR)/%.d: $(this_srcdir)/%.c
-	$(CC) $(CFLAGS) $(BASECFLAGS) $(INCLUDES) $< -MM -MF $@ -MQ $(@:.d=.o)
+	$(CC) $(CFLAGS) $(INCLUDES) $< -MM -MF $@ -MQ $(@:.d=.o)
 
 $(OUTDIR)/%.o: $(this_srcdir)/%.c | ${DEPS}
-	$(CC) $(CFLAGS) $(BASECFLAGS) $(INCLUDES) -c $< -o $@
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
 	@if [ -d $(OUTDIR) ]; then \
